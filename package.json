@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js"
+    
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -25,3 +26,5 @@
     "nodemon": "^2.0.22"
   }
 }
+
+ 

@@ -4,26 +4,25 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const cookieParser = require("cookie-parser");
+
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/userRoutes");
+const donationRoutes = require("./routes/donations");
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-app.use(helmet());
-
 // 🔹 Lista de origens permitidas
 const allowedOrigins = [
-  "http://localhost:3000", // React/Vite
-  "http://127.0.0.1:5500", // Live Server (VSCode)
-  "http://localhost:5500", // Variação do Live Server
+  "http://localhost:3000",
+  "http://127.0.0.1:5500",
+  "http://localhost:5500",
 ];
 
 // 🔹 Configuração de CORS
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Permite chamadas sem origin (ex.: mobile, curl, Postman)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -36,9 +35,10 @@ app.use(
   })
 );
 
+app.use(helmet());
+app.use(morgan("dev"));
 app.use(express.json());
 app.use(cookieParser());
-app.use(morgan("dev"));
 
 // Rate limiter básico
 const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
@@ -46,8 +46,8 @@ app.use(limiter);
 
 // Rate limiter específico para auth
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 20, // máximo 20 tentativas
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   message: {
     success: false,
     message: "Muitas tentativas de login. Tente novamente em 15 minutos.",
@@ -55,9 +55,10 @@ const authLimiter = rateLimit({
 });
 app.use("/api/auth/", authLimiter);
 
-// Rotas
+// 🔹 Rotas (sempre depois do CORS e middlewares globais)
 app.use("/api/auth", authRoutes);
-app.use("/api/user", userRoutes);
+app.use("/api/donations", donationRoutes);
+app.use("/api/users", userRoutes);
 
 // Rota principal
 app.get("/", (req, res) => {
@@ -79,10 +80,11 @@ app.get("/", (req, res) => {
       "POST /api/auth/refresh-token",
       "POST /api/auth/logout",
       "GET  /api/auth/me",
-      "GET  /api/user/profile",
-      "GET  /api/user/balance",
-      "POST /api/user/update-balance",
-      "GET  /api/user/stats",
+      "GET  /api/users/profile",
+      "GET  /api/users/balance",
+      "POST /api/users/update-balance",
+      "GET  /api/users/stats",
+      "GET  /api/users/search",
     ],
   });
 });
@@ -104,6 +106,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// 🔹 Error handler (deve ser o último middleware)
 app.use(errorHandler);
 
 module.exports = app;

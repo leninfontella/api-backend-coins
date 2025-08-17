@@ -188,17 +188,37 @@ exports.getStats = async (req, res, next) => {
 // CORREÇÃO: Adicionar endpoint para buscar usuários (para sistema de doação)
 exports.searchUsers = async (req, res, next) => {
   try {
-    const { query } = req.query;
+    console.log("🔍 Iniciando busca de usuários...");
+    console.log("👤 Usuário logado:", req.user);
+    console.log("🔍 Query params:", req.query);
 
-    if (!query || query.length < 2) {
+    const { query, q, page = 1, limit = 10 } = req.query;
+    const searchQuery = query || q;
+
+    // Validação da query
+    if (!searchQuery) {
+      return res.status(400).json({
+        success: false,
+        message: "Parâmetro de busca é obrigatório",
+        debug: "Missing 'query' or 'q' parameter",
+      });
+    }
+
+    if (searchQuery.length < 2) {
       return res.status(400).json({
         success: false,
         message: "Query deve ter pelo menos 2 caracteres",
       });
     }
 
-    const searchRegex = new RegExp(query, "i"); // Case insensitive
+    console.log(`🔍 Buscando por: "${searchQuery}"`);
 
+    const searchRegex = new RegExp(searchQuery.trim(), "i");
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // 🔍 CORREÇÃO: Busca mais robusta
     const users = await User.find({
       $and: [
         { _id: { $ne: req.user.id } }, // Excluir usuário atual
@@ -206,31 +226,76 @@ exports.searchUsers = async (req, res, next) => {
           $or: [
             { name: searchRegex },
             { email: searchRegex },
-            // Adicione outros campos conforme necessário
+            { username: searchRegex },
           ],
         },
       ],
     })
-      .select("name email coins level avatar")
-      .limit(10); // Limitar resultados
+      .select(
+        "name email username coins level avatar totalDonated totalReceived createdAt"
+      )
+      .limit(limitNum)
+      .skip(skip)
+      .sort({ name: 1 }); // Ordenar por nome
 
-    // Formatar resultados para compatibilidade com frontend
+    console.log(`✅ Encontrados ${users.length} usuários`);
+
+    // 🔍 CORREÇÃO: Formatar dados para o frontend
     const formattedUsers = users.map((user) => ({
-      id: user._id,
-      name: user.name,
-      username: user.email, // Usar email como username por enquanto
+      id: user._id.toString(),
+      name: user.name || "Usuário Anônimo",
+      username: user.username || user.email || "sem-username",
+      email: user.email,
       avatar: user.avatar || "👤",
-      coins: user.coins,
-      level: `Nível ${user.level}`,
-      institution: "Instituição Exemplo", // Placeholder - adicione campo no modelo se necessário
+      coins: user.coins || 0,
+      level: user.level || 1,
+      levelText: `Nível ${user.level || 1}`,
+      totalDonated: user.totalDonated || 0,
+      totalReceived: user.totalReceived || 0,
+      institution: "Instituição Exemplo", // TODO: Adicionar campo no modelo
+      joinDate: user.createdAt
+        ? user.createdAt.toISOString().split("T")[0]
+        : null,
     }));
 
-    res.json({
-      success: true,
-      data: formattedUsers,
+    // Total de resultados (para paginação)
+    const totalResults = await User.countDocuments({
+      $and: [
+        { _id: { $ne: req.user.id } },
+        {
+          $or: [
+            { name: searchRegex },
+            { email: searchRegex },
+            { username: searchRegex },
+          ],
+        },
+      ],
     });
+
+    const response = {
+      success: true,
+      data: {
+        users: formattedUsers,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalResults,
+          pages: Math.ceil(totalResults / limitNum),
+          hasNext: skip + limitNum < totalResults,
+          hasPrev: pageNum > 1,
+        },
+      },
+      debug: {
+        searchQuery: searchQuery,
+        foundUsers: users.length,
+        totalResults: totalResults,
+      },
+    };
+
+    console.log("✅ Busca concluída com sucesso");
+    res.json(response);
   } catch (error) {
-    console.error("Erro ao buscar usuários:", error);
+    console.error("❌ Erro na busca de usuários:", error);
     next(error);
   }
 };
