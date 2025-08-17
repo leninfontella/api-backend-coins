@@ -27,6 +27,7 @@ exports.register = async (req, res, next) => {
     if (exists) return res.status(409).json({ message: "Email já cadastrado" });
 
     const user = new User({ name, email, password });
+    // coins: 100 é automático pelo default no schema
     await user.save();
 
     const accessToken = createAccessToken(user._id);
@@ -41,10 +42,21 @@ exports.register = async (req, res, next) => {
     // enviar cookie httpOnly com refresh token
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
+    // ========== MODIFICADO: Incluir dados de moedas na resposta ==========
     res.status(201).json({
       success: true,
+      message:
+        "Usuário criado com sucesso! Você ganhou 100 moedas de bônus! 🎉",
       data: {
-        user: { id: user._id, name: user.name, email: user.email },
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          coins: user.coins,
+          level: user.level,
+          totalDonated: user.totalDonated,
+          totalReceived: user.totalReceived,
+        },
         accessToken,
       },
     });
@@ -81,10 +93,20 @@ exports.login = async (req, res, next) => {
 
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
+    // ========== MODIFICADO: Incluir dados completos de moedas na resposta ==========
     res.json({
       success: true,
+      message: "Login realizado com sucesso!",
       data: {
-        user: { id: user._id, name: user.name, email: user.email },
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          coins: user.coins,
+          level: user.level,
+          totalDonated: user.totalDonated,
+          totalReceived: user.totalReceived,
+        },
         accessToken,
       },
     });
@@ -150,10 +172,16 @@ exports.logout = async (req, res, next) => {
   }
 };
 
+// ========== MODIFICADO: Incluir dados de moedas na resposta do me ==========
 exports.me = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    res.json({ success: true, data: user });
+    res.json({
+      success: true,
+      data: {
+        user: user.getPublicData(), // Usar o método que criamos no model
+      },
+    });
   } catch (err) {
     next(err);
   }
