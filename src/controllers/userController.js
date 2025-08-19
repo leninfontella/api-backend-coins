@@ -185,6 +185,46 @@ exports.getStats = async (req, res, next) => {
   }
 };
 
+// Obter dados de um usuário específico pelo ID
+exports.getUserById = async (req, res, next) => {
+  try {
+    const userId = req.params.userId;
+
+    const user = await User.findById(userId).select(
+      "name email username coins level avatar totalDonated totalReceived createdAt updatedAt"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuário não encontrado",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          username: user.username,
+          coins: user.coins,
+          level: user.level,
+          totalDonated: user.totalDonated || 0,
+          totalReceived: user.totalReceived || 0,
+          avatar: user.avatar || null,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao buscar usuário por ID:", error);
+    next(error);
+  }
+};
+
 // CORREÇÃO: Adicionar endpoint para buscar usuários (para sistema de doação)
 exports.searchUsers = async (req, res, next) => {
   try {

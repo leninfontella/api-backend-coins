@@ -109,6 +109,14 @@ router.get("/donations", donationController.getUserDonations);
 // GET /api/users/donations/stats - Obter estatísticas de doações
 router.get("/donations/stats", donationController.getUserStats);
 
+// GET /api/users/:userId - Obter detalhes de um usuário específico
+router.get(
+  "/:userId",
+  [param("userId").isMongoId().withMessage("ID de usuário inválido")],
+  validateRequest,
+  userController.getUserById
+);
+
 // GET /api/users/:userId/can-donate - Verificar se pode doar para um usuário específico
 router.get(
   "/:userId/can-donate",
