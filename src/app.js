@@ -8,18 +8,20 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/userRoutes");
 const donationRoutes = require("./routes/donations");
+const rankingRoutes = require("./routes/rankingRoutes"); // ← Nova rota
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-// 🔹 Lista de origens permitidas
+// Lista de origens permitidas
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:5500",
   "http://localhost:5500",
+  "http://127.0.0.1:3000",
 ];
 
-// 🔹 Configuração de CORS
+// Configuração de CORS
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -55,10 +57,11 @@ const authLimiter = rateLimit({
 });
 app.use("/api/auth/", authLimiter);
 
-// 🔹 Rotas (sempre depois do CORS e middlewares globais)
+// ========== ROTAS ==========
 app.use("/api/auth", authRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/ranking", rankingRoutes); // ← Nova rota de ranking
 
 // Rota principal
 app.get("/", (req, res) => {
@@ -71,20 +74,29 @@ app.get("/", (req, res) => {
       userCoins: true,
       rateLimiting: true,
       security: true,
+      ranking: true, // ← Nova feature
     },
     endpoints: [
       "GET  /",
       "GET  /api/health",
+      // Auth endpoints
       "POST /api/auth/register",
       "POST /api/auth/login",
       "POST /api/auth/refresh-token",
       "POST /api/auth/logout",
       "GET  /api/auth/me",
+      // User endpoints
       "GET  /api/users/profile",
       "GET  /api/users/balance",
       "POST /api/users/update-balance",
       "GET  /api/users/stats",
       "GET  /api/users/search",
+      // Ranking endpoints ← Novos
+      "GET  /api/ranking",
+      "GET  /api/ranking/top10",
+      "GET  /api/ranking/my-position",
+      "GET  /api/ranking/around-me",
+      "GET  /api/ranking/stats",
     ],
   });
 });
@@ -102,11 +114,12 @@ app.get("/api/health", (req, res) => {
       userCoins: true,
       rateLimiting: true,
       security: true,
+      ranking: true,
     },
   });
 });
 
-// 🔹 Error handler (deve ser o último middleware)
+// Error handler (deve ser o último middleware)
 app.use(errorHandler);
 
 module.exports = app;
