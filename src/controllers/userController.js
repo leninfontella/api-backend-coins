@@ -12,15 +12,18 @@ exports.getProfile = async (req, res, next) => {
       });
     }
 
-    // CORREÇÃO: Retornar estrutura compatível com Auth.js
+    // CORREÇÃO: Estrutura compatível com frontend
     res.json({
       success: true,
       data: {
         user: {
           id: user._id,
           name: user.name,
+          fullName: user.fullName || user.name, // CORREÇÃO: Garantir nome completo
+          displayName: user.fullName || user.name, // Adicionar displayName
           email: user.email,
           coins: user.coins,
+          balance: user.coins, // Compatibilidade
           level: user.level,
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
@@ -48,7 +51,7 @@ exports.getBalance = async (req, res, next) => {
       });
     }
 
-    // CORREÇÃO: Retornar estrutura compatível com Auth.js
+    // CORREÇÃO: Retornar estrutura compatível com frontend
     res.json({
       success: true,
       coins: user.coins, // Frontend procura por 'coins'
@@ -126,7 +129,9 @@ exports.updateBalance = async (req, res, next) => {
 
     // Log da transação para auditoria
     console.log(
-      `💰 Saldo atualizado - Usuário: ${user.name}, Valor: ${finalAmount}, Novo saldo: ${user.coins}`
+      `💰 Saldo atualizado - Usuário: ${
+        user.fullName || user.name
+      }, Valor: ${finalAmount}, Novo saldo: ${user.coins}`
     );
 
     // CORREÇÃO: Retornar estrutura compatível
@@ -191,7 +196,7 @@ exports.getUserById = async (req, res, next) => {
     const userId = req.params.userId;
 
     const user = await User.findById(userId).select(
-      "name email username coins level avatar totalDonated totalReceived createdAt updatedAt"
+      "name fullName email username coins level avatar totalDonated totalReceived createdAt updatedAt"
     );
 
     if (!user) {
@@ -207,6 +212,8 @@ exports.getUserById = async (req, res, next) => {
         user: {
           id: user._id,
           name: user.name,
+          fullName: user.fullName || user.name,
+          displayName: user.fullName || user.name,
           email: user.email,
           username: user.username,
           coins: user.coins,
@@ -225,12 +232,12 @@ exports.getUserById = async (req, res, next) => {
   }
 };
 
-// CORREÇÃO: Adicionar endpoint para buscar usuários (para sistema de doação)
+// CORREÇÃO: Buscar usuários para sistema de doação
 exports.searchUsers = async (req, res, next) => {
   try {
     console.log("🔍 Iniciando busca de usuários...");
     console.log("👤 Usuário logado:", req.user);
-    console.log("🔍 Query params:", req.query);
+    console.log("🔗 Query params:", req.query);
 
     const { query, q, page = 1, limit = 10 } = req.query;
     const searchQuery = query || q;
@@ -265,6 +272,7 @@ exports.searchUsers = async (req, res, next) => {
         {
           $or: [
             { name: searchRegex },
+            { fullName: searchRegex }, // CORREÇÃO: Incluir fullName
             { email: searchRegex },
             { username: searchRegex },
           ],
@@ -272,7 +280,7 @@ exports.searchUsers = async (req, res, next) => {
       ],
     })
       .select(
-        "name email username coins level avatar totalDonated totalReceived createdAt"
+        "name fullName email username coins level avatar totalDonated totalReceived createdAt"
       )
       .limit(limitNum)
       .skip(skip)
@@ -283,7 +291,9 @@ exports.searchUsers = async (req, res, next) => {
     // 🔍 CORREÇÃO: Formatar dados para o frontend
     const formattedUsers = users.map((user) => ({
       id: user._id.toString(),
-      name: user.name || "Usuário Anônimo",
+      name: user.fullName || user.name || "Usuário Anônimo", // CORREÇÃO: Priorizar fullName
+      fullName: user.fullName || user.name,
+      displayName: user.fullName || user.name,
       username: user.username || user.email || "sem-username",
       email: user.email,
       avatar: user.avatar || "👤",
@@ -305,6 +315,7 @@ exports.searchUsers = async (req, res, next) => {
         {
           $or: [
             { name: searchRegex },
+            { fullName: searchRegex }, // CORREÇÃO: Incluir fullName
             { email: searchRegex },
             { username: searchRegex },
           ],
@@ -340,7 +351,7 @@ exports.searchUsers = async (req, res, next) => {
   }
 };
 
-// CORREÇÃO: Adicionar endpoint para processar doações
+// CORREÇÃO: Processar doações
 exports.donateCoins = async (req, res, next) => {
   try {
     const { recipientId, amount, message } = req.body;
@@ -400,7 +411,9 @@ exports.donateCoins = async (req, res, next) => {
 
     // Log da transação
     console.log(
-      `💸 Doação processada - ${donor.name} -> ${recipient.name}: ${amount} moedas`
+      `Doação processada - ${donor.fullName || donor.name} -> ${
+        recipient.fullName || recipient.name
+      }: ${amount} moedas`
     );
 
     res.json({
@@ -412,7 +425,7 @@ exports.donateCoins = async (req, res, next) => {
           totalDonated: donor.totalDonated,
         },
         recipient: {
-          name: recipient.name,
+          name: recipient.fullName || recipient.name,
           coins: recipient.coins,
         },
         transaction: {

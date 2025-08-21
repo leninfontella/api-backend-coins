@@ -45,12 +45,22 @@ router.get("/", auth, async (req, res) => {
         ],
       })) + 1;
 
-    // Adicionar posição no ranking para cada usuário
+    // CORREÇÃO: Adicionar posição no ranking para cada usuário com campos corretos
     const usersWithRank = users.map((user, index) => ({
-      ...user.toObject(),
-      rank: skip + index + 1,
-      displayName: user.fullName || user.name,
+      _id: user._id,
+      id: user._id,
+      name: user.name,
+      fullName: user.fullName || user.name, // CORREÇÃO: Garantir fullName
+      displayName: user.fullName || user.name, // CORREÇÃO: Adicionar displayName
+      username: user.username,
+      avatar: user.avatar,
+      coins: user.coins,
       balance: user.coins, // Compatibilidade com frontend
+      level: user.level,
+      totalDonated: user.totalDonated || 0,
+      totalReceived: user.totalReceived || 0,
+      rank: skip + index + 1,
+      createdAt: user.createdAt,
     }));
 
     res.json({
@@ -62,9 +72,19 @@ router.get("/", auth, async (req, res) => {
         totalPages: Math.ceil(totalUsers / limit),
         currentUserRank,
         currentUser: {
-          ...req.user.getPublicData(),
-          rank: currentUserRank,
+          _id: req.user._id,
+          id: req.user._id,
+          name: req.user.name,
+          fullName: req.user.fullName || req.user.name, // CORREÇÃO: Garantir fullName
+          displayName: req.user.fullName || req.user.name,
+          coins: req.user.coins,
           balance: req.user.coins,
+          level: req.user.level,
+          totalDonated: req.user.totalDonated || 0,
+          totalReceived: req.user.totalReceived || 0,
+          rank: currentUserRank,
+          avatar: req.user.avatar,
+          createdAt: req.user.createdAt,
         },
       },
     });
@@ -91,10 +111,18 @@ router.get("/top10", auth, async (req, res) => {
       .limit(10);
 
     const usersWithRank = topUsers.map((user, index) => ({
-      ...user.toObject(),
-      rank: index + 1,
-      displayName: user.fullName || user.name,
+      _id: user._id,
+      id: user._id,
+      name: user.name,
+      fullName: user.fullName || user.name, // CORREÇÃO: Garantir fullName
+      displayName: user.fullName || user.name, // CORREÇÃO: Adicionar displayName
+      username: user.username,
+      avatar: user.avatar,
+      coins: user.coins,
       balance: user.coins,
+      level: user.level,
+      totalDonated: user.totalDonated || 0,
+      rank: index + 1,
     }));
 
     res.json({
@@ -141,9 +169,21 @@ router.get("/my-position", auth, async (req, res) => {
       success: true,
       data: {
         user: {
-          ...req.user.getPublicData(),
-          rank,
+          _id: req.user._id,
+          id: req.user._id,
+          name: req.user.name,
+          fullName: req.user.fullName || req.user.name, // CORREÇÃO: Garantir fullName
+          displayName: req.user.fullName || req.user.name,
+          email: req.user.email,
+          coins: req.user.coins,
           balance: req.user.coins,
+          level: req.user.level,
+          totalDonated: req.user.totalDonated || 0,
+          totalReceived: req.user.totalReceived || 0,
+          avatar: req.user.avatar,
+          rank,
+          createdAt: req.user.createdAt,
+          updatedAt: req.user.updatedAt,
         },
         totalUsers,
         percentile: (((totalUsers - rank + 1) / totalUsers) * 100).toFixed(1),
@@ -190,10 +230,18 @@ router.get("/around-me", auth, async (req, res) => {
       .limit(limit);
 
     const usersWithRank = users.map((user, index) => ({
-      ...user.toObject(),
-      rank: skip + index + 1,
-      displayName: user.fullName || user.name,
+      _id: user._id,
+      id: user._id,
+      name: user.name,
+      fullName: user.fullName || user.name, // CORREÇÃO: Garantir fullName
+      displayName: user.fullName || user.name, // CORREÇÃO: Adicionar displayName
+      username: user.username,
+      avatar: user.avatar,
+      coins: user.coins,
       balance: user.coins,
+      level: user.level,
+      totalDonated: user.totalDonated || 0,
+      rank: skip + index + 1,
       isCurrentUser: user._id.toString() === req.user._id.toString(),
     }));
 
