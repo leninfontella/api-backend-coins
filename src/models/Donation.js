@@ -29,7 +29,6 @@ const donationSchema = new mongoose.Schema(
       enum: ["pending", "completed", "failed", "cancelled"],
       default: "pending",
     },
-    // Dados desnormalizados para histórico (caso usuário seja deletado)
     donorInfo: {
       name: String,
       username: String,
@@ -40,11 +39,10 @@ const donationSchema = new mongoose.Schema(
       username: String,
       avatar: String,
     },
-    // Metadados da transação
     metadata: {
       userAgent: String,
       ipAddress: String,
-      processingTime: Number, // em ms
+      processingTime: Number,
       failureReason: String,
     },
   },
@@ -93,31 +91,28 @@ donationSchema.pre("save", async function (next) {
   next();
 });
 
-// Middleware pós-save para atualizar estatísticas dos usuários
+// Middleware pós-save para atualizar estatísticas e moedas
 donationSchema.post("save", async function (doc) {
   if (doc.status === "completed" && doc.isModified("status")) {
     try {
       const User = mongoose.model("User");
 
-      // Atualizar estatísticas do doador
-      await User.findByIdAndUpdate(doc.donor, {
-        $inc: {
-          "stats.donationsSent": 1,
-          "stats.totalDonated": doc.amount,
-        },
-        "stats.lastDonationAt": new Date(),
-      });
+      // Buscar os documentos completos do doador e do receptor
+      const [donorUser, recipientUser] = await Promise.all([
+        User.findById(doc.donor),
+        User.findById(doc.recipient),
+      ]);
 
-      // Atualizar estatísticas do receptor
-      await User.findByIdAndUpdate(doc.recipient, {
-        $inc: {
-          "stats.donationsReceived": 1,
-          "stats.totalReceived": doc.amount,
-        },
-        "stats.lastReceivedAt": new Date(),
-      });
+      if (donorUser) {
+        // Usar o método 'updateCoins' do modelo User para garantir que o middleware seja acionado
+        await donorUser.updateCoins(-doc.amount, "donation");
+      }
 
-      // Criar notificações
+      if (recipientUser) {
+        await recipientUser.updateCoins(doc.amount, "received");
+      }
+
+      // Criar notificações (o restante do código pode ser mantido)
       const Notification = mongoose.model("Notification");
 
       await Promise.all([

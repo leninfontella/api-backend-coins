@@ -12,52 +12,75 @@ class DonationController {
       const donorId = req.user.id;
       const { recipientId, amount, message } = req.body;
 
-      // Validar dados
-      const validation = donationService.validateDonationData(
-        donorId,
-        recipientId,
-        amount,
-        message
-      );
+      // 1. Validar dados de entrada
+      const parsedAmount = parseInt(amount);
 
-      if (!validation.isValid) {
+      if (parsedAmount <= 0) {
         return res.status(400).json({
           success: false,
-          message: "Dados inválidos",
-          errors: validation.errors,
+          message: "O valor da doação deve ser maior que zero.",
         });
       }
 
-      // Metadata da requisição
-      const metadata = {
-        userAgent: req.get("User-Agent"),
-        ipAddress: req.ip,
-        timestamp: new Date(),
-      };
+      // 2. Obter os usuários do doador e do receptor
+      const [donorUser, recipientUser] = await Promise.all([
+        User.findById(donorId),
+        User.findById(recipientId),
+      ]);
 
-      // Processar doação
-      const result = await donationService.processDonation(
-        donorId,
-        recipientId,
-        parseInt(amount),
-        message || "",
-        metadata
-      );
-
-      if (result.success) {
-        res.status(201).json({
-          success: true,
-          message: result.message,
-          data: {
-            donation: result.donation,
-          },
-        });
-      } else {
-        res.status(400).json({
+      if (!donorUser || !recipientUser) {
+        return res.status(404).json({
           success: false,
-          message: result.error,
+          message: "Doador ou destinatário não encontrado.",
         });
       }
+
+      // 3. Verificar se o doador tem saldo suficiente usando o método do modelo User
+      if (!donorUser.hasEnoughCoins(parsedAmount)) {
+        return res.status(400).json({
+          success: false,
+          message: "Saldo insuficiente para a doação.",
+        });
+      }
+
+      // 4. Criar a doação no banco de dados (o status é 'completed' pois a lógica de transação é tratada aqui)
+      const newDonation = new Donation({
+        donor: donorUser._id,
+        recipient: recipientUser._id,
+        amount: parsedAmount,
+        message: message || "",
+        status: "completed",
+        donorInfo: {
+          name: donorUser.name,
+          username: donorUser.username,
+          avatar: donorUser.avatar,
+        },
+        recipientInfo: {
+          name: recipientUser.name,
+          username: recipientUser.username,
+          avatar: recipientUser.avatar,
+        },
+      });
+      await newDonation.save();
+
+      // 5. USAR OS MÉTODOS 'updateCoins' PARA ATUALIZAR OS USUÁRIOS
+      // Isso garante que a lógica de negócio do modelo 'User' seja executada,
+      // incluindo a atualização dos campos 'totalDonated' e 'totalReceived'
+      await Promise.all([
+        donorUser.updateCoins(-parsedAmount, "donation"),
+        recipientUser.updateCoins(parsedAmount, "received"),
+      ]);
+
+      // 6. Retornar uma resposta de sucesso
+      res.status(201).json({
+        success: true,
+        message: `Doação de ${parsedAmount} moedas realizada com sucesso!`,
+        data: {
+          donationId: newDonation._id,
+          donorCoins: donorUser.coins,
+          recipientCoins: recipientUser.coins,
+        },
+      });
     } catch (error) {
       console.error("Erro ao criar doação:", error);
       res.status(500).json({
@@ -146,7 +169,10 @@ class DonationController {
       const result = await donationService.searchUsers(
         query.trim(),
         currentUserId,
-        { page: parseInt(page), limit: parseInt(limit) }
+        {
+          page: parseInt(page),
+          limit: parseInt(limit),
+        }
       );
 
       res.json({
@@ -220,7 +246,9 @@ class DonationController {
 
       res.json({
         success: true,
-        data: { donation },
+        data: {
+          donation,
+        },
       });
     } catch (error) {
       console.error("Erro ao obter doação:", error);
@@ -244,7 +272,9 @@ class DonationController {
       res.json({
         success: true,
         message: "Doação cancelada com sucesso",
-        data: { donation },
+        data: {
+          donation,
+        },
       });
     } catch (error) {
       console.error("Erro ao cancelar doação:", error);
