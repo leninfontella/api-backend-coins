@@ -464,3 +464,320 @@ async function getCoinsRank(coins) {
     return null;
   }
 }
+
+// Adicionar estas funções ao final do userController.js
+
+// CORREÇÃO: Obter todas as transações para o botão "all"
+exports.getAllDonations = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const Donation = require("../models/Donation");
+
+    // Buscar todas as doações concluídas
+    const donations = await Donation.find({ status: "completed" })
+      .populate("donor", "name fullName avatar username")
+      .populate("recipient", "name fullName avatar username")
+      .sort({ createdAt: -1 })
+      .limit(limitNum)
+      .skip(skip);
+
+    // Total de doações para paginação
+    const totalDonations = await Donation.countDocuments({
+      status: "completed",
+    });
+
+    // Formatar dados para o frontend
+    const formattedDonations = donations.map((donation) => ({
+      _id: donation._id,
+      amount: donation.amount,
+      message: donation.message || "",
+      status: donation.status,
+      createdAt: donation.createdAt,
+      updatedAt: donation.updatedAt,
+      donor: {
+        _id: donation.donor._id,
+        name: donation.donor.fullName || donation.donor.name,
+        fullName: donation.donor.fullName || donation.donor.name,
+        avatar: donation.donor.avatar || "👤",
+        username: donation.donor.username,
+      },
+      recipient: {
+        _id: donation.recipient._id,
+        name: donation.recipient.fullName || donation.recipient.name,
+        fullName: donation.recipient.fullName || donation.recipient.name,
+        avatar: donation.recipient.avatar || "👤",
+        username: donation.recipient.username,
+      },
+      donorInfo: {
+        name: donation.donor.fullName || donation.donor.name,
+        avatar: donation.donor.avatar || "👤",
+        username: donation.donor.username,
+      },
+      recipientInfo: {
+        name: donation.recipient.fullName || donation.recipient.name,
+        avatar: donation.recipient.avatar || "👤",
+        username: donation.recipient.username,
+      },
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        donations: formattedDonations,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalDonations,
+          pages: Math.ceil(totalDonations / limitNum),
+          hasNext: skip + limitNum < totalDonations,
+          hasPrev: pageNum > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao obter todas as doações:", error);
+    next(error);
+  }
+};
+
+// CORREÇÃO: Obter apenas transações enviadas pelo usuário logado
+exports.getSentDonations = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const Donation = require("../models/Donation");
+
+    // Buscar doações enviadas pelo usuário
+    const donations = await Donation.find({
+      donor: req.user.id,
+      status: "completed",
+    })
+      .populate("recipient", "name fullName avatar username")
+      .sort({ createdAt: -1 })
+      .limit(limitNum)
+      .skip(skip);
+
+    // Total de doações enviadas
+    const totalDonations = await Donation.countDocuments({
+      donor: req.user.id,
+      status: "completed",
+    });
+
+    // Formatar dados
+    const formattedDonations = donations.map((donation) => ({
+      _id: donation._id,
+      amount: donation.amount,
+      message: donation.message || "",
+      status: donation.status,
+      createdAt: donation.createdAt,
+      updatedAt: donation.updatedAt,
+      type: "sent", // Identificar como enviada
+      donor: {
+        _id: req.user.id,
+        name: req.user.fullName || req.user.name,
+        fullName: req.user.fullName || req.user.name,
+        avatar: req.user.avatar || "👤",
+        username: req.user.username,
+      },
+      recipient: {
+        _id: donation.recipient._id,
+        name: donation.recipient.fullName || donation.recipient.name,
+        fullName: donation.recipient.fullName || donation.recipient.name,
+        avatar: donation.recipient.avatar || "👤",
+        username: donation.recipient.username,
+      },
+      donorInfo: {
+        name: req.user.fullName || req.user.name,
+        avatar: req.user.avatar || "👤",
+        username: req.user.username,
+      },
+      recipientInfo: {
+        name: donation.recipient.fullName || donation.recipient.name,
+        avatar: donation.recipient.avatar || "👤",
+        username: donation.recipient.username,
+      },
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        donations: formattedDonations,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalDonations,
+          pages: Math.ceil(totalDonations / limitNum),
+          hasNext: skip + limitNum < totalDonations,
+          hasPrev: pageNum > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao obter doações enviadas:", error);
+    next(error);
+  }
+};
+
+// CORREÇÃO: Obter apenas transações recebidas pelo usuário logado
+exports.getReceivedDonations = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const Donation = require("../models/Donation");
+
+    // Buscar doações recebidas pelo usuário
+    const donations = await Donation.find({
+      recipient: req.user.id,
+      status: "completed",
+    })
+      .populate("donor", "name fullName avatar username")
+      .sort({ createdAt: -1 })
+      .limit(limitNum)
+      .skip(skip);
+
+    // Total de doações recebidas
+    const totalDonations = await Donation.countDocuments({
+      recipient: req.user.id,
+      status: "completed",
+    });
+
+    // Formatar dados
+    const formattedDonations = donations.map((donation) => ({
+      _id: donation._id,
+      amount: donation.amount,
+      message: donation.message || "",
+      status: donation.status,
+      createdAt: donation.createdAt,
+      updatedAt: donation.updatedAt,
+      type: "received", // Identificar como recebida
+      donor: {
+        _id: donation.donor._id,
+        name: donation.donor.fullName || donation.donor.name,
+        fullName: donation.donor.fullName || donation.donor.name,
+        avatar: donation.donor.avatar || "👤",
+        username: donation.donor.username,
+      },
+      recipient: {
+        _id: req.user.id,
+        name: req.user.fullName || req.user.name,
+        fullName: req.user.fullName || req.user.name,
+        avatar: req.user.avatar || "👤",
+        username: req.user.username,
+      },
+      donorInfo: {
+        name: donation.donor.fullName || donation.donor.name,
+        avatar: donation.donor.avatar || "👤",
+        username: donation.donor.username,
+      },
+      recipientInfo: {
+        name: req.user.fullName || req.user.name,
+        avatar: req.user.avatar || "👤",
+        username: req.user.username,
+      },
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        donations: formattedDonations,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: totalDonations,
+          pages: Math.ceil(totalDonations / limitNum),
+          hasNext: skip + limitNum < totalDonations,
+          hasPrev: pageNum > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao obter doações recebidas:", error);
+    next(error);
+  }
+};
+
+// CORREÇÃO: Atualizar função getStats para incluir contadores corretos
+exports.getStats = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuário não encontrado",
+      });
+    }
+
+    const Donation = require("../models/Donation");
+
+    // Buscar estatísticas reais do banco
+    const [sentCount, receivedCount, todaySent, todayReceived] =
+      await Promise.all([
+        // Total de doações enviadas
+        Donation.countDocuments({ donor: req.user.id, status: "completed" }),
+        // Total de doações recebidas
+        Donation.countDocuments({
+          recipient: req.user.id,
+          status: "completed",
+        }),
+        // Doações enviadas hoje
+        Donation.countDocuments({
+          donor: req.user.id,
+          status: "completed",
+          createdAt: {
+            $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+            $lt: new Date(new Date().setHours(23, 59, 59, 999)),
+          },
+        }),
+        // Doações recebidas hoje
+        Donation.countDocuments({
+          recipient: req.user.id,
+          status: "completed",
+          createdAt: {
+            $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+            $lt: new Date(new Date().setHours(23, 59, 59, 999)),
+          },
+        }),
+      ]);
+
+    // Calcular algumas estatísticas interessantes
+    const stats = {
+      coins: user.coins,
+      level: user.level,
+      totalDonated: user.totalDonated || 0,
+      totalReceived: user.totalReceived || 0,
+      netBalance: user.coins,
+      donationRank: await getDonationRank(user.totalDonated || 0),
+      coinsRank: await getCoinsRank(user.coins),
+
+      // CORREÇÃO: Contadores corretos do banco de dados
+      donationsSent: sentCount, // Para totalTransactions no frontend
+      donationsReceived: receivedCount, // Para todayActivity no frontend
+      todayActivity: todaySent + todayReceived, // Atividade real de hoje
+      totalTransactions: sentCount + receivedCount, // Total de transações
+
+      // Campos adicionais
+      totalEarned: user.coins + (user.totalDonated || 0),
+      bonusCoins: Math.floor(user.coins * 0.1),
+      monthlyCoins: Math.floor(user.coins * 0.15),
+    };
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    console.error("Erro ao obter estatísticas:", error);
+    next(error);
+  }
+};

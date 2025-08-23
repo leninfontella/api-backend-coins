@@ -315,6 +315,59 @@ router.get(
 // GET /api/users/donations/stats - Obter estatísticas de doações
 router.get("/donations/stats", donationController.getUserStats);
 
+// ========== NOVAS ROTAS PARA TIMELINE ==========
+
+// GET /api/users/donations/all - Obter todas as doações (botão "all")
+router.get(
+  "/donations/all",
+  [
+    query("page")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("Página deve ser um número maior que 0"),
+    query("limit")
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage("Limite deve ser entre 1 e 100"),
+  ],
+  validateRequest,
+  userController.getAllDonations
+);
+
+// GET /api/users/donations/sent - Obter doações enviadas pelo usuário
+router.get(
+  "/donations/sent",
+  [
+    query("page")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("Página deve ser um número maior que 0"),
+    query("limit")
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage("Limite deve ser entre 1 e 100"),
+  ],
+  validateRequest,
+  userController.getSentDonations
+);
+
+// GET /api/users/donations/received - Obter doações recebidas pelo usuário
+router.get(
+  "/donations/received",
+  [
+    query("page")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("Página deve ser um número maior que 0"),
+    query("limit")
+      .optional()
+      .isInt({ min: 1, max: 100 })
+      .withMessage("Limite deve ser entre 1 e 100"),
+  ],
+  validateRequest,
+  userController.getReceivedDonations
+);
+
 // ========== ROTAS ESPECÍFICAS POR ID (devem vir por último) ==========
 
 // GET /api/users/:userId - Obter detalhes de um usuário específico

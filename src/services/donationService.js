@@ -43,18 +43,22 @@ class DonationService {
       }
 
       // Verificar se não está bloqueado
-      if (donor.isBlocked(recipientId) || recipient.isBlocked(donorId)) {
+      if (donor.isBlocked && donor.isBlocked(recipientId)) {
+        throw new Error("Não é possível realizar doação para este usuário");
+      }
+
+      if (recipient.isBlocked && recipient.isBlocked(donorId)) {
         throw new Error("Não é possível realizar doação para este usuário");
       }
 
       // Verificar saldo
-      if (!donor.canDonate(amount)) {
+      if (donor.coins < amount) {
         throw new Error("Saldo insuficiente");
       }
 
       // Verificar limite diário
-      const dailyTotal = await donor.getDailyDonationTotal();
-      const dailyLimit = donor.settings.dailyDonationLimit || 50000;
+      const dailyTotal = await this.getDailyDonationTotal(donorId);
+      const dailyLimit = donor.settings?.dailyDonationLimit || 50000;
 
       if (dailyTotal + amount > dailyLimit) {
         throw new Error(
@@ -63,7 +67,7 @@ class DonationService {
       }
 
       // Verificar limite por transação
-      const maxAmount = donor.settings.maxDonationAmount || 10000;
+      const maxAmount = donor.settings?.maxDonationAmount || 10000;
       if (amount > maxAmount) {
         throw new Error(`Valor excede limite por transação: ${maxAmount}`);
       }
@@ -74,6 +78,13 @@ class DonationService {
       // Atualizar saldos
       donor.coins -= amount;
       recipient.coins += amount;
+
+      // Atualizar estatísticas
+      if (!donor.totalDonated) donor.totalDonated = 0;
+      if (!recipient.totalReceived) recipient.totalReceived = 0;
+
+      donor.totalDonated += amount;
+      recipient.totalReceived += amount;
 
       // Salvar usuários
       await Promise.all([donor.save({ session }), recipient.save({ session })]);
@@ -98,8 +109,8 @@ class DonationService {
 
       // Buscar doação populada para retorno
       const populatedDonation = await Donation.findById(donation._id)
-        .populate("donor", "name username avatar")
-        .populate("recipient", "name username avatar");
+        .populate("donor", "name fullName username avatar")
+        .populate("recipient", "name fullName username avatar");
 
       return {
         success: true,
@@ -136,25 +147,116 @@ class DonationService {
   }
 
   /**
-   * Busca histórico de doações do usuário
+   * Buscar usuários para doação
+   */
+  static async searchUsers(query, currentUserId, options = {}) {
+    const { page = 1, limit = 20 } = options;
+    const skip = (page - 1) * limit;
+
+    if (!query || query.trim().length < 2) {
+      throw new Error("Query deve ter pelo menos 2 caracteres");
+    }
+
+    const sanitizedQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchRegex = new RegExp(sanitizedQuery, "i");
+
+    const users = await User.find({
+      $and: [
+        { _id: { $ne: currentUserId } },
+        { status: "active" },
+        {
+          $or: [
+            { name: searchRegex },
+            { fullName: searchRegex },
+            { username: searchRegex },
+            { email: searchRegex },
+          ],
+        },
+      ],
+    })
+      .select(
+        "name fullName username email avatar coins level totalDonated totalReceived createdAt"
+      )
+      .limit(limit)
+      .skip(skip)
+      .sort({ name: 1 });
+
+    const totalResults = await User.countDocuments({
+      $and: [
+        { _id: { $ne: currentUserId } },
+        { status: "active" },
+        {
+          $or: [
+            { name: searchRegex },
+            { fullName: searchRegex },
+            { username: searchRegex },
+            { email: searchRegex },
+          ],
+        },
+      ],
+    });
+
+    const formattedUsers = users.map((user) => ({
+      id: user._id.toString(),
+      name: user.fullName || user.name || "Usuário Anônimo",
+      fullName: user.fullName || user.name,
+      displayName: user.fullName || user.name,
+      username: user.username || user.email || "sem-username",
+      email: user.email,
+      avatar: user.avatar || "👤",
+      coins: user.coins || 0,
+      level: user.level || 1,
+      levelText: `Nível ${user.level || 1}`,
+      totalDonated: user.totalDonated || 0,
+      totalReceived: user.totalReceived || 0,
+      joinDate: user.createdAt
+        ? user.createdAt.toISOString().split("T")[0]
+        : null,
+    }));
+
+    return {
+      users: formattedUsers,
+      pagination: {
+        page,
+        limit,
+        total: totalResults,
+        pages: Math.ceil(totalResults / limit),
+        hasNext: skip + limit < totalResults,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /**
+   * Obter histórico de doações do usuário
    */
   async getUserDonationHistory(userId, options = {}) {
     const { type = "all", page = 1, limit = 20 } = options;
     const skip = (page - 1) * limit;
 
-    const donations = await Donation.getUserDonationHistory(userId, {
-      type,
-      limit: parseInt(limit),
-      skip,
-    });
+    let query = {};
 
-    const total = await Donation.countDocuments(
-      type === "all"
-        ? { $or: [{ donor: userId }, { recipient: userId }] }
-        : type === "sent"
-        ? { donor: userId }
-        : { recipient: userId }
-    );
+    switch (type) {
+      case "sent":
+        query.donor = userId;
+        break;
+      case "received":
+        query.recipient = userId;
+        break;
+      default:
+        query.$or = [{ donor: userId }, { recipient: userId }];
+    }
+
+    query.status = "completed";
+
+    const donations = await Donation.find(query)
+      .populate("donor", "name fullName username avatar")
+      .populate("recipient", "name fullName username avatar")
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .skip(skip);
+
+    const total = await Donation.countDocuments(query);
 
     return {
       donations,
@@ -163,20 +265,66 @@ class DonationService {
         limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit),
+        hasNext: skip + limit < total,
+        hasPrev: page > 1,
       },
     };
   }
 
   /**
-   * Obtém estatísticas de doação do usuário
+   * Obter estatísticas de doação do usuário
    */
   async getUserDonationStats(userId) {
-    const user = await User.findById(userId).select("stats coins level");
+    const user = await User.findById(userId);
     if (!user) {
       throw new Error("Usuário não encontrado");
     }
 
-    // Estatísticas detalhadas por período
+    // Estatísticas agregadas das doações
+    const [sentStats, receivedStats, todayStats] = await Promise.all([
+      Donation.aggregate([
+        { $match: { donor: user._id, status: "completed" } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            total: { $sum: "$amount" },
+            avg: { $avg: "$amount" },
+          },
+        },
+      ]),
+      Donation.aggregate([
+        { $match: { recipient: user._id, status: "completed" } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            total: { $sum: "$amount" },
+            avg: { $avg: "$amount" },
+          },
+        },
+      ]),
+      Donation.aggregate([
+        {
+          $match: {
+            $or: [{ donor: user._id }, { recipient: user._id }],
+            status: "completed",
+            createdAt: {
+              $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+              $lt: new Date(new Date().setHours(23, 59, 59, 999)),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+    ]);
+
+    // Estatísticas por período
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfWeek = new Date(now.setDate(now.getDate() - now.getDay()));
@@ -187,11 +335,24 @@ class DonationService {
     ]);
 
     return {
-      user: {
-        coins: user.coins,
-        level: user.level,
-        ...user.stats.toObject(),
-      },
+      userId: user._id,
+      donationsSent: sentStats[0]?.count || 0,
+      totalDonated: sentStats[0]?.total || 0,
+      avgDonationSent: Math.round(sentStats[0]?.avg || 0),
+
+      donationsReceived: receivedStats[0]?.count || 0,
+      totalReceived: receivedStats[0]?.total || 0,
+      avgDonationReceived: Math.round(receivedStats[0]?.avg || 0),
+
+      todayActivity: todayStats[0]?.count || 0,
+      totalTransactions:
+        (sentStats[0]?.count || 0) + (receivedStats[0]?.count || 0),
+
+      currentBalance: user.coins,
+      level: user.level,
+      joinDate: user.createdAt,
+
+      // Estatísticas por período
       monthly: monthlyStats,
       weekly: weeklyStats,
     };
@@ -247,22 +408,35 @@ class DonationService {
   }
 
   /**
-   * Ranking geral de usuários
+   * Obter ranking de usuários
    */
   async getUserRanking(page = 1, limit = 100) {
     const skip = (page - 1) * limit;
 
-    const users = await User.getRanking(limit, skip);
+    const users = await User.find({ status: "active" })
+      .select(
+        "name fullName username avatar coins level totalDonated totalReceived"
+      )
+      .sort({ coins: -1, totalDonated: -1, name: 1 })
+      .limit(limit)
+      .skip(skip);
+
     const total = await User.countDocuments({ status: "active" });
 
-    // Adicionar posição no ranking
-    const usersWithRank = users.map((user, index) => ({
-      ...user.toObject(),
-      rank: skip + index + 1,
+    const formattedUsers = users.map((user, index) => ({
+      position: skip + index + 1,
+      id: user._id,
+      name: user.fullName || user.name,
+      username: user.username,
+      avatar: user.avatar || "👤",
+      coins: user.coins,
+      level: user.level,
+      totalDonated: user.totalDonated || 0,
+      totalReceived: user.totalReceived || 0,
     }));
 
     return {
-      users: usersWithRank,
+      users: formattedUsers,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -273,20 +447,167 @@ class DonationService {
   }
 
   /**
-   * Buscar usuários
+   * Verificar se pode receber doação
    */
-  async searchUsers(query, currentUserId, options = {}) {
-    const { page = 1, limit = 20 } = options;
-    const skip = (page - 1) * limit;
+  async canReceiveDonation(recipientId, donorId) {
+    const [recipient, donor] = await Promise.all([
+      User.findById(recipientId),
+      User.findById(donorId),
+    ]);
 
-    const users = await User.searchUsers(query, currentUserId, { limit, skip });
+    if (!recipient || !donor) {
+      return {
+        canDonate: false,
+        reason: "Usuário não encontrado",
+      };
+    }
+
+    if (recipient.status !== "active") {
+      return {
+        canDonate: false,
+        reason: "Usuário destinatário não está ativo",
+      };
+    }
+
+    if (donor.isBlocked && donor.isBlocked(recipientId)) {
+      return {
+        canDonate: false,
+        reason: "Usuário bloqueado",
+      };
+    }
+
+    if (recipient.isBlocked && recipient.isBlocked(donorId)) {
+      return {
+        canDonate: false,
+        reason: "Você foi bloqueado por este usuário",
+      };
+    }
+
+    if (recipient.settings?.donationPrivacy === "private") {
+      return {
+        canDonate: false,
+        reason: "Usuário não aceita doações",
+      };
+    }
 
     return {
-      users,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+      canDonate: true,
+      recipient: {
+        id: recipient._id,
+        name: recipient.fullName || recipient.name,
+        avatar: recipient.avatar,
+        level: recipient.level,
       },
+    };
+  }
+
+  /**
+   * Obter doações recentes (feed público)
+   */
+  async getRecentDonations(limit = 20, skip = 0) {
+    const donations = await Donation.find({
+      status: "completed",
+      // Apenas doações públicas
+      $expr: {
+        $eq: [{ $ifNull: ["$donorInfo.privacy", "public"] }, "public"],
+      },
+    })
+      .populate("donor", "name fullName username avatar settings")
+      .populate("recipient", "name fullName username avatar")
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .skip(skip);
+
+    return donations.map((donation) => ({
+      _id: donation._id,
+      amount: donation.amount,
+      message: donation.message,
+      createdAt: donation.createdAt,
+      donor: {
+        _id: donation.donor._id,
+        name: donation.donor.fullName || donation.donor.name,
+        username: donation.donor.username,
+        avatar: donation.donor.avatar || "👤",
+      },
+      recipient: {
+        _id: donation.recipient._id,
+        name: donation.recipient.fullName || donation.recipient.name,
+        username: donation.recipient.username,
+        avatar: donation.recipient.avatar || "👤",
+      },
+      donorInfo: {
+        name: donation.donor.fullName || donation.donor.name,
+        username: donation.donor.username,
+        avatar: donation.donor.avatar || "👤",
+      },
+      recipientInfo: {
+        name: donation.recipient.fullName || donation.recipient.name,
+        username: donation.recipient.username,
+        avatar: donation.recipient.avatar || "👤",
+      },
+    }));
+  }
+
+  /**
+   * Obter estatísticas globais
+   */
+  async getGlobalStats() {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const [totalStats, todayStats, userStats] = await Promise.all([
+      Donation.aggregate([
+        { $match: { status: "completed" } },
+        {
+          $group: {
+            _id: null,
+            totalDonations: { $sum: 1 },
+            totalAmount: { $sum: "$amount" },
+            avgAmount: { $avg: "$amount" },
+          },
+        },
+      ]),
+      Donation.aggregate([
+        {
+          $match: {
+            status: "completed",
+            createdAt: {
+              $gte: new Date(new Date().setHours(0, 0, 0, 0)),
+              $lt: new Date(new Date().setHours(23, 59, 59, 999)),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            todayDonations: { $sum: 1 },
+            todayAmount: { $sum: "$amount" },
+          },
+        },
+      ]),
+      User.aggregate([
+        { $match: { status: "active" } },
+        {
+          $group: {
+            _id: null,
+            totalUsers: { $sum: 1 },
+            totalCoins: { $sum: "$coins" },
+            avgCoins: { $avg: "$coins" },
+          },
+        },
+      ]),
+    ]);
+
+    return {
+      totalDonations: totalStats[0]?.totalDonations || 0,
+      totalAmount: totalStats[0]?.totalAmount || 0,
+      avgDonation: Math.round(totalStats[0]?.avgAmount || 0),
+      todayDonations: todayStats[0]?.todayDonations || 0,
+      todayAmount: todayStats[0]?.todayAmount || 0,
+      totalUsers: userStats[0]?.totalUsers || 0,
+      totalCoins: userStats[0]?.totalCoins || 0,
+      avgCoins: Math.round(userStats[0]?.avgCoins || 0),
     };
   }
 
@@ -312,119 +633,6 @@ class DonationService {
     await donation.save();
 
     return donation;
-  }
-
-  /**
-   * Estatísticas globais do sistema
-   */
-  async getGlobalStats() {
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    const [todayStats, yesterdayStats, totalStats] = await Promise.all([
-      Donation.getDailyStats(today),
-      Donation.getDailyStats(yesterday),
-      this.getTotalSystemStats(),
-    ]);
-
-    return {
-      today: todayStats[0] || this.getEmptyStats(),
-      yesterday: yesterdayStats[0] || this.getEmptyStats(),
-      total: totalStats,
-    };
-  }
-
-  /**
-   * Estatísticas totais do sistema
-   */
-  async getTotalSystemStats() {
-    const [donationStats, userStats] = await Promise.all([
-      Donation.aggregate([
-        {
-          $match: { status: "completed" },
-        },
-        {
-          $group: {
-            _id: null,
-            totalDonations: { $sum: 1 },
-            totalAmount: { $sum: "$amount" },
-            avgAmount: { $avg: "$amount" },
-          },
-        },
-      ]),
-      User.aggregate([
-        {
-          $match: { status: "active" },
-        },
-        {
-          $group: {
-            _id: null,
-            totalUsers: { $sum: 1 },
-            totalCoins: { $sum: "$coins" },
-            avgCoins: { $avg: "$coins" },
-          },
-        },
-      ]),
-    ]);
-
-    return {
-      ...(donationStats[0] || this.getEmptyStats()),
-      ...(userStats[0] || { totalUsers: 0, totalCoins: 0, avgCoins: 0 }),
-    };
-  }
-
-  /**
-   * Retorna objeto de estatísticas vazio
-   */
-  getEmptyStats() {
-    return {
-      totalDonations: 0,
-      totalAmount: 0,
-      avgAmount: 0,
-      uniqueDonors: 0,
-      uniqueRecipients: 0,
-    };
-  }
-
-  /**
-   * Verificar se usuário pode receber doações
-   */
-  async canReceiveDonation(userId, donorId) {
-    const user = await User.findById(userId);
-
-    if (!user || user.status !== "active") {
-      return { can: false, reason: "Usuário não encontrado ou inativo" };
-    }
-
-    if (user.settings.donationPrivacy === "private") {
-      return { can: false, reason: "Usuário não aceita doações" };
-    }
-
-    if (user.isBlocked(donorId)) {
-      return { can: false, reason: "Você foi bloqueado por este usuário" };
-    }
-
-    return { can: true };
-  }
-
-  /**
-   * Obter doações recentes para feed
-   */
-  async getRecentDonations(limit = 20, skip = 0) {
-    return await Donation.find({
-      status: "completed",
-      // Apenas doações públicas
-      $expr: {
-        $eq: [{ $ifNull: ["$donorInfo.privacy", "public"] }, "public"],
-      },
-    })
-      .populate("donor", "name username avatar settings.donationPrivacy")
-      .populate("recipient", "name username avatar")
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .skip(skip)
-      .select("-message"); // Remover mensagens por privacidade
   }
 
   /**
@@ -570,6 +778,32 @@ class DonationService {
   }
 
   /**
+   * Obter total de doações diárias do usuário
+   */
+  async getDailyDonationTotal(userId) {
+    const startOfDay = new Date(new Date().setHours(0, 0, 0, 0));
+    const endOfDay = new Date(new Date().setHours(23, 59, 59, 999));
+
+    const result = await Donation.aggregate([
+      {
+        $match: {
+          donor: new mongoose.Types.ObjectId(userId),
+          status: "completed",
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    return result[0]?.total || 0;
+  }
+
+  /**
    * Validar dados de doação
    */
   validateDonationData(donorId, recipientId, amount, message) {
@@ -602,6 +836,19 @@ class DonationService {
     return {
       isValid: errors.length === 0,
       errors,
+    };
+  }
+
+  /**
+   * Retorna objeto de estatísticas vazio
+   */
+  getEmptyStats() {
+    return {
+      totalDonations: 0,
+      totalAmount: 0,
+      avgAmount: 0,
+      uniqueDonors: 0,
+      uniqueRecipients: 0,
     };
   }
 }
