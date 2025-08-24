@@ -52,11 +52,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: [
         // Seus levels originais
-        "Doador Iniciante",
-        "Doador Bronze",
-        "Doador Prata",
-        "Doador Ouro",
-        "Doador Platina",
+        // "Doador Iniciante",
+        // "Doador Bronze",
+        // "Doador Prata",
+        // "Doador Ouro",
+        // "Doador Platina",
         // Levels do novo sistema
         "Iniciante",
         "Explorador",
@@ -69,7 +69,7 @@ const userSchema = new mongoose.Schema(
         "Mito",
         "Divino",
       ],
-      default: "Doador Iniciante",
+      default: "Iniciante",
     },
 
     // Campos originais mantidos
@@ -309,12 +309,12 @@ userSchema.methods.calculateLevel = function () {
   if (totalWealth >= 500) return "Explorador";
 
   // Manter compatibilidade com sistema antigo para usuários existentes
-  if (donated >= 5000) return "Doador Platina";
-  if (donated >= 2000) return "Doador Ouro";
-  if (donated >= 1000) return "Doador Prata";
-  if (donated >= 500) return "Doador Bronze";
+  // if (donated >= 5000) return "Doador Platina";
+  // if (donated >= 2000) return "Doador Ouro";
+  // if (donated >= 1000) return "Doador Prata";
+  // if (donated >= 500) return "Doador Bronze";
 
-  return coins >= 100 ? "Iniciante" : "Doador Iniciante";
+  return "Iniciante";
 };
 
 // Método original atualizado para usar o novo sistema

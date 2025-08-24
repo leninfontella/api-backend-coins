@@ -45,8 +45,7 @@ exports.register = async (req, res, next) => {
     // ========== MODIFICADO: Incluir dados de moedas na resposta ==========
     res.status(201).json({
       success: true,
-      message:
-        "Usuário criado com sucesso! Você ganhou 100 moedas de bônus! 🎉",
+      message: "Usuário criado com sucesso!",
       data: {
         user: {
           id: user._id,
