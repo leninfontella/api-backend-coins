@@ -4,67 +4,90 @@ const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    fullName: { type: String, required: false, trim: true },
-    name: { type: String, required: true, trim: true, minlength: 2 },
+    // ========== CAMPOS BÁSICOS ==========
+    fullName: {
+      type: String,
+      required: false,
+      trim: true,
+      maxlength: [100, "Nome completo não pode exceder 100 caracteres"],
+    },
+    name: {
+      type: String,
+      required: [true, "Nome é obrigatório"],
+      trim: true,
+      minlength: [2, "Nome deve ter pelo menos 2 caracteres"],
+      maxlength: [50, "Nome não pode exceder 50 caracteres"],
+    },
     email: {
       type: String,
-      required: true,
+      required: [true, "Email é obrigatório"],
       unique: true,
       lowercase: true,
       trim: true,
+      match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, "Email inválido"],
     },
-    password: { type: String, required: true, minlength: 8, select: false },
+    password: {
+      type: String,
+      required: [true, "Senha é obrigatória"],
+      minlength: [6, "Senha deve ter pelo menos 6 caracteres"],
+      select: false,
+    },
+    phone: {
+      type: String,
+      trim: true,
+      default: "",
+      match: [
+        /^(\+55\s?)?(\(?[1-9]{2}\)?\s?)?9?[0-9]{4}[-\s]?[0-9]{4}$/,
+        "Telefone inválido",
+      ],
+    },
 
-    // ========== NOVOS CAMPOS PARA SISTEMA DE BUSCA ==========
+    // ========== CAMPOS PARA SISTEMA DE BUSCA ==========
     username: {
       type: String,
       unique: true,
-      sparse: true, // permite null mas mantém unique
+      sparse: true,
       trim: true,
       lowercase: true,
-      minlength: 3,
-      maxlength: 50,
+      minlength: [3, "Username deve ter pelo menos 3 caracteres"],
+      maxlength: [30, "Username não pode exceder 30 caracteres"],
     },
     institution: {
       type: String,
       trim: true,
-      maxlength: 255,
+      maxlength: [255, "Instituição não pode exceder 255 caracteres"],
     },
     avatar: {
       type: String,
       default: "👤",
     },
 
-    // ========== SISTEMA DE MOEDAS - CAMPOS ATUALIZADOS ==========
+    // ========== SISTEMA DE MOEDAS E GAMIFICAÇÃO ==========
     coins: {
       type: Number,
-      default: 100, // Saldo inicial de 100 moedas
+      default: 1000, // Valor inicial aumentado
       min: [0, "Saldo não pode ser negativo"],
-      max: [10000000, "Saldo máximo excedido"], // Limite de segurança
+      max: [10000000, "Saldo máximo excedido"],
       validate: {
         validator: Number.isInteger,
         message: "Saldo deve ser um número inteiro",
       },
     },
 
-    // Sistema de levels expandido e compatível
+    // Sistema de levels expandido
     level: {
       type: String,
       enum: [
-        // Seus levels originais
-        // "Doador Iniciante",
-        // "Doador Bronze",
-        // "Doador Prata",
-        // "Doador Ouro",
-        // "Doador Platina",
-        // Levels do novo sistema
         "Iniciante",
         "Explorador",
         "Aventureiro",
+        "Contribuidor",
         "Benfeitor",
         "Generoso",
+        "Expert",
         "Filantropo",
         "Magnata",
+        "Mestre",
         "Lenda",
         "Mito",
         "Divino",
@@ -72,11 +95,22 @@ const userSchema = new mongoose.Schema(
       default: "Iniciante",
     },
 
-    // Campos originais mantidos
+    // Experiência e progressão
+    xp: {
+      type: Number,
+      default: 0,
+      min: [0, "XP não pode ser negativo"],
+    },
+    maxXp: {
+      type: Number,
+      default: 1000,
+    },
+
+    // Métricas totais
     totalDonated: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Total doado não pode ser negativo"],
       validate: {
         validator: Number.isInteger,
         message: "Total doado deve ser um número inteiro",
@@ -85,31 +119,90 @@ const userSchema = new mongoose.Schema(
     totalReceived: {
       type: Number,
       default: 0,
-      min: 0,
+      min: [0, "Total recebido não pode ser negativo"],
       validate: {
         validator: Number.isInteger,
         message: "Total recebido deve ser um número inteiro",
       },
     },
 
-    // ========== NOVOS CAMPOS PARA SISTEMA AVANÇADO ==========
+    // Metas e objetivos
+    monthlyGoal: {
+      type: Number,
+      default: 500,
+      min: [50, "Meta mínima é 50 moedas"],
+      max: [50000, "Meta máxima é 50.000 moedas"],
+    },
+
+    // Score e ranking
+    score: {
+      type: Number,
+      default: 0,
+      min: [0, "Score não pode ser negativo"],
+    },
+    rank: {
+      type: Number,
+      default: null,
+    },
+
+    // ========== STATUS E SEGURANÇA ==========
     status: {
       type: String,
       enum: ["active", "inactive", "suspended"],
       default: "active",
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    verificationToken: String,
+    resetPasswordToken: String,
+    resetPasswordExpires: Date,
 
-    // Estatísticas detalhadas (compatível com o sistema anterior)
+    // ========== ESTATÍSTICAS DETALHADAS ==========
     stats: {
       donationsSent: { type: Number, default: 0, min: 0 },
-      totalDonated: { type: Number, default: 0, min: 0 }, // Sincronizado com campo raiz
+      donationsCount: { type: Number, default: 0, min: 0 }, // Alias
+      totalDonated: { type: Number, default: 0, min: 0 },
       donationsReceived: { type: Number, default: 0, min: 0 },
-      totalReceived: { type: Number, default: 0, min: 0 }, // Sincronizado com campo raiz
+      receivedCount: { type: Number, default: 0, min: 0 }, // Alias
+      totalReceived: { type: Number, default: 0, min: 0 },
       lastDonationAt: Date,
+      lastDonationDate: Date, // Alias
       lastReceivedAt: Date,
+      lastReceivedDate: Date, // Alias
+      joinedDate: {
+        type: Date,
+        default: Date.now,
+      },
+      longestDonationStreak: { type: Number, default: 0 },
+      currentDonationStreak: { type: Number, default: 0 },
     },
 
-    // Configurações do usuário
+    // ========== CONFIGURAÇÕES DO USUÁRIO ==========
+    preferences: {
+      notifications: {
+        email: { type: Boolean, default: true },
+        push: { type: Boolean, default: true },
+        donations: { type: Boolean, default: true },
+        achievements: { type: Boolean, default: true },
+      },
+      privacy: {
+        showProfile: { type: Boolean, default: true },
+        showStats: { type: Boolean, default: true },
+        showRanking: { type: Boolean, default: true },
+      },
+      theme: {
+        type: String,
+        enum: ["light", "dark", "auto"],
+        default: "auto",
+      },
+    },
+
     settings: {
       emailNotifications: { type: Boolean, default: true },
       pushNotifications: { type: Boolean, default: true },
@@ -137,6 +230,12 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    // ========== AUDITORIA E SEGURANÇA ==========
+    lastLogin: Date,
+    loginCount: { type: Number, default: 0 },
+    ipAddress: String,
+    userAgent: String,
+
     // Usuários bloqueados
     blockedUsers: [
       {
@@ -149,31 +248,55 @@ const userSchema = new mongoose.Schema(
   {
     timestamps: true,
     toJSON: {
+      virtuals: true,
       transform: function (doc, ret) {
         delete ret.password;
+        delete ret.verificationToken;
+        delete ret.resetPasswordToken;
         return ret;
       },
     },
+    toObject: { virtuals: true },
   }
 );
 
 // ========== ÍNDICES PARA OTIMIZAÇÃO ==========
 userSchema.index({ name: "text", username: "text", institution: "text" });
+userSchema.index({ email: 1 });
 userSchema.index({ coins: -1 });
+userSchema.index({ score: -1 });
 userSchema.index({ status: 1 });
 userSchema.index({ username: 1 });
-userSchema.index({ email: 1 });
 userSchema.index({ totalDonated: -1 });
-userSchema.index({ createdAt: -1 }); // Para ordenação por data de criação
+userSchema.index({ xp: -1 });
+userSchema.index({ isActive: 1 });
+userSchema.index({ createdAt: -1 });
+
+// ========== VIRTUALS ==========
+userSchema.virtual("firstName").get(function () {
+  return this.name ? this.name.split(" ")[0] : "";
+});
+
+userSchema.virtual("levelProgress").get(function () {
+  const level = this.calculateLevelInfo();
+  if (!level || level.maxXp === Infinity) return 100;
+
+  const progress =
+    ((this.xp - level.minXp) / (level.maxXp - level.minXp)) * 100;
+  return Math.min(Math.max(progress, 0), 100);
+});
+
+userSchema.virtual("nextLevelXp").get(function () {
+  const level = this.calculateLevelInfo();
+  return level && level.maxXp !== Infinity ? level.maxXp : null;
+});
 
 // ========== MIDDLEWARE ==========
-
-// Middleware para hash da senha (mantido original)
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
 
   try {
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {
@@ -181,32 +304,28 @@ userSchema.pre("save", async function (next) {
   }
 });
 
-// Middleware para sincronizar stats com campos raiz e calcular nível
 userSchema.pre("save", function (next) {
   try {
     // Garantir que valores não sejam negativos
     this.coins = Math.max(0, this.coins || 0);
     this.totalDonated = Math.max(0, this.totalDonated || 0);
     this.totalReceived = Math.max(0, this.totalReceived || 0);
+    this.xp = Math.max(0, this.xp || 0);
+    this.score = Math.max(0, this.score || 0);
 
     // Sincronizar estatísticas
-    if (
-      this.isModified("stats.totalDonated") ||
-      this.isModified("totalDonated")
-    ) {
-      this.stats.totalDonated = this.totalDonated;
-    }
-    if (
-      this.isModified("stats.totalReceived") ||
-      this.isModified("totalReceived")
-    ) {
-      this.stats.totalReceived = this.totalReceived;
-    }
+    this.stats.totalDonated = this.totalDonated;
+    this.stats.totalReceived = this.totalReceived;
+    this.stats.donationsCount = this.stats.donationsSent;
+    this.stats.receivedCount = this.stats.donationsReceived;
+    this.stats.lastDonationDate = this.stats.lastDonationAt;
+    this.stats.lastReceivedDate = this.stats.lastReceivedAt;
 
-    // Atualizar level se moedas mudaram
+    // Atualizar level se necessário
     if (
       this.isModified("coins") ||
       this.isModified("totalDonated") ||
+      this.isModified("xp") ||
       this.isNew
     ) {
       this.level = this.calculateLevel();
@@ -218,115 +337,160 @@ userSchema.pre("save", function (next) {
   }
 });
 
-// ========== MÉTODOS ORIGINAIS (MANTIDOS) ==========
+userSchema.pre("findOneAndUpdate", function (next) {
+  this.set({ updatedAt: new Date() });
+  next();
+});
 
-// Método para comparar senha (mantido original)
-userSchema.methods.comparePassword = function (candidatePassword) {
-  return bcrypt.compare(candidatePassword, this.password);
+// ========== MÉTODOS DE INSTÂNCIA ==========
+
+// Método para comparar senha
+userSchema.methods.comparePassword = async function (candidatePassword) {
+  try {
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    throw new Error("Erro ao comparar senhas");
+  }
 };
 
-// Método para atualizar saldo e estatísticas (melhorado com validação)
-userSchema.methods.updateCoins = async function (amount, operation = "other") {
-  // Validação de entrada
-  if (!Number.isInteger(amount)) {
-    throw new Error("Quantidade deve ser um número inteiro");
-  }
+// Método para calcular informações do nível
+userSchema.methods.calculateLevelInfo = function () {
+  const levels = [
+    { name: "Iniciante", minXp: 0, maxXp: 100 },
+    { name: "Explorador", minXp: 101, maxXp: 500 },
+    { name: "Aventureiro", minXp: 501, maxXp: 1000 },
+    { name: "Contribuidor", minXp: 1001, maxXp: 2000 },
+    { name: "Benfeitor", minXp: 2001, maxXp: 3500 },
+    { name: "Generoso", minXp: 3501, maxXp: 5000 },
+    { name: "Expert", minXp: 5001, maxXp: 7500 },
+    { name: "Filantropo", minXp: 7501, maxXp: 10000 },
+    { name: "Magnata", minXp: 10001, maxXp: 15000 },
+    { name: "Mestre", minXp: 15001, maxXp: 25000 },
+    { name: "Lenda", minXp: 25001, maxXp: 50000 },
+    { name: "Mito", minXp: 50001, maxXp: 100000 },
+    { name: "Divino", minXp: 100001, maxXp: Infinity },
+  ];
 
-  // Verificar se operação não deixará saldo negativo
-  if (this.coins + amount < 0) {
-    throw new Error("Saldo insuficiente para esta operação");
-  }
-
-  // Atualizar saldo
-  this.coins += amount;
-
-  // Atualizar estatísticas baseado na operação
-  if (operation === "donation" && amount < 0) {
-    this.totalDonated += Math.abs(amount);
-    this.stats.donationsSent += 1;
-    this.stats.totalDonated = this.totalDonated;
-    this.stats.lastDonationAt = new Date();
-  } else if (operation === "received" && amount > 0) {
-    this.totalReceived += amount;
-    this.stats.donationsReceived += 1;
-    this.stats.totalReceived = this.totalReceived;
-    this.stats.lastReceivedAt = new Date();
-  }
-
-  // Atualizar level será feito automaticamente pelo middleware
-  return await this.save();
+  return levels.find(
+    (level) => this.xp >= level.minXp && this.xp <= level.maxXp
+  );
 };
 
-// Método para verificar se tem saldo suficiente (mantido)
-userSchema.methods.hasEnoughCoins = function (amount) {
-  return this.coins >= amount;
-};
-
-// ========== NOVOS MÉTODOS ==========
-
-// Método para validar integridade dos dados
-userSchema.methods.validateIntegrity = function () {
-  const issues = [];
-
-  if (this.coins < 0) issues.push("Saldo negativo");
-  if (this.totalDonated < 0) issues.push("Total doado negativo");
-  if (this.totalReceived < 0) issues.push("Total recebido negativo");
-  if (this.stats.donationsSent < 0) issues.push("Doações enviadas negativas");
-  if (this.stats.donationsReceived < 0)
-    issues.push("Doações recebidas negativas");
-
-  // Verificar sincronização
-  if (this.stats.totalDonated !== this.totalDonated) {
-    issues.push("Dessincronização em totalDonated");
-  }
-  if (this.stats.totalReceived !== this.totalReceived) {
-    issues.push("Dessincronização em totalReceived");
-  }
-
-  return {
-    isValid: issues.length === 0,
-    issues: issues,
-  };
-};
-
-// Método melhorado para calcular level (compatível com sistema antigo e novo)
+// Método para calcular level baseado em múltiplos fatores
 userSchema.methods.calculateLevel = function () {
   const donated = this.totalDonated || 0;
   const coins = this.coins || 0;
+  const xp = this.xp || 0;
 
-  // Sistema baseado principalmente em moedas totais (coins + donated)
+  // Sistema híbrido: XP + wealth total
   const totalWealth = coins + donated;
+  const levelInfo = this.calculateLevelInfo();
 
-  // Níveis do novo sistema (baseado em wealth total)
+  // Se XP define um nível mais alto que wealth, usar XP
+  if (levelInfo && levelInfo.name !== "Iniciante") {
+    return levelInfo.name;
+  }
+
+  // Senão, usar sistema baseado em wealth
   if (totalWealth >= 1000000) return "Divino";
   if (totalWealth >= 500000) return "Mito";
   if (totalWealth >= 100000) return "Lenda";
   if (totalWealth >= 50000) return "Magnata";
+  if (totalWealth >= 25000) return "Mestre";
   if (totalWealth >= 10000) return "Filantropo";
   if (totalWealth >= 5000) return "Generoso";
   if (totalWealth >= 2000) return "Benfeitor";
   if (totalWealth >= 1000) return "Aventureiro";
   if (totalWealth >= 500) return "Explorador";
 
-  // Manter compatibilidade com sistema antigo para usuários existentes
-  // if (donated >= 5000) return "Doador Platina";
-  // if (donated >= 2000) return "Doador Ouro";
-  // if (donated >= 1000) return "Doador Prata";
-  // if (donated >= 500) return "Doador Bronze";
-
   return "Iniciante";
 };
 
-// Método original atualizado para usar o novo sistema
-userSchema.methods.updateLevel = function () {
-  this.level = this.calculateLevel();
-  return this.level;
+// Método para adicionar XP e verificar level up
+userSchema.methods.addExperience = function (xpAmount) {
+  const oldLevel = this.level;
+  this.xp += xpAmount;
+
+  const newLevelInfo = this.calculateLevelInfo();
+  const newLevel = this.calculateLevel();
+
+  if (newLevelInfo && newLevelInfo.maxXp !== Infinity) {
+    this.maxXp = newLevelInfo.maxXp;
+  }
+
+  this.level = newLevel;
+
+  return {
+    levelUp: oldLevel !== newLevel,
+    oldLevel: oldLevel,
+    newLevel: newLevel,
+    xpGained: xpAmount,
+  };
 };
 
-// Novo método para verificar se pode doar (com mais validações)
+// Método atualizado para processar doações
+userSchema.methods.updateCoins = async function (amount, operation = "other") {
+  if (!Number.isInteger(amount)) {
+    throw new Error("Quantidade deve ser um número inteiro");
+  }
+
+  if (this.coins + amount < 0) {
+    throw new Error("Saldo insuficiente para esta operação");
+  }
+
+  this.coins += amount;
+
+  let xpGained = 0;
+  let levelResult = { levelUp: false };
+
+  if (operation === "donation" && amount < 0) {
+    const donatedAmount = Math.abs(amount);
+    this.totalDonated += donatedAmount;
+    this.stats.donationsSent += 1;
+    this.stats.totalDonated = this.totalDonated;
+    this.stats.lastDonationAt = new Date();
+
+    // XP por doação: 1 XP por moeda doada
+    xpGained = donatedAmount;
+    levelResult = this.addExperience(xpGained);
+
+    // Score por doação
+    this.score += Math.floor(donatedAmount * 1.5);
+  } else if (operation === "received" && amount > 0) {
+    this.totalReceived += amount;
+    this.stats.donationsReceived += 1;
+    this.stats.totalReceived = this.totalReceived;
+    this.stats.lastReceivedAt = new Date();
+
+    // XP menor para quem recebe: 0.5 XP por moeda
+    xpGained = Math.floor(amount * 0.5);
+    levelResult = this.addExperience(xpGained);
+
+    // Score por recebimento
+    this.score += Math.floor(amount * 0.8);
+  }
+
+  await this.save();
+
+  return {
+    success: true,
+    newBalance: this.coins,
+    xpGained: xpGained,
+    levelUp: levelResult.levelUp,
+    oldLevel: levelResult.oldLevel,
+    newLevel: levelResult.newLevel || this.level,
+  };
+};
+
+// Método para verificar se tem saldo suficiente
+userSchema.methods.hasEnoughCoins = function (amount) {
+  return this.coins >= amount;
+};
+
+// Método para verificar se pode doar
 userSchema.methods.canDonate = function (amount) {
   if (!Number.isInteger(amount) || amount <= 0) return false;
-  if (this.status !== "active") return false;
+  if (this.status !== "active" || !this.isActive) return false;
   if (this.coins < amount) return false;
 
   const maxAmount = this.settings.maxDonationAmount || 10000;
@@ -335,12 +499,21 @@ userSchema.methods.canDonate = function (amount) {
   return true;
 };
 
-// Método para obter total de doações do dia (com tratamento de erro)
+// Método para processar doação (compatibilidade)
+userSchema.methods.processDonation = async function (amount, toUserId) {
+  return await this.updateCoins(-amount, "donation");
+};
+
+// Método para receber doação (compatibilidade)
+userSchema.methods.receiveDonation = async function (amount, fromUserId) {
+  return await this.updateCoins(amount, "received");
+};
+
+// Método para obter total de doações do dia
 userSchema.methods.getDailyDonationTotal = async function () {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -375,7 +548,23 @@ userSchema.methods.isBlocked = function (userId) {
   );
 };
 
-// Método para obter dados públicos (atualizado)
+// Método para validar integridade dos dados
+userSchema.methods.validateIntegrity = function () {
+  const issues = [];
+
+  if (this.coins < 0) issues.push("Saldo negativo");
+  if (this.totalDonated < 0) issues.push("Total doado negativo");
+  if (this.totalReceived < 0) issues.push("Total recebido negativo");
+  if (this.xp < 0) issues.push("XP negativo");
+  if (this.score < 0) issues.push("Score negativo");
+
+  return {
+    isValid: issues.length === 0,
+    issues: issues,
+  };
+};
+
+// Método para obter dados públicos
 userSchema.methods.getPublicData = function () {
   return {
     id: this._id,
@@ -387,14 +576,12 @@ userSchema.methods.getPublicData = function () {
     institution: this.institution,
     coins: this.coins,
     level: this.level,
+    xp: this.xp,
+    maxXp: this.maxXp,
+    score: this.score,
     totalDonated: this.totalDonated,
     totalReceived: this.totalReceived,
-    stats: {
-      donationsSent: this.stats.donationsSent,
-      donationsReceived: this.stats.donationsReceived,
-      lastDonationAt: this.stats.lastDonationAt,
-      lastReceivedAt: this.stats.lastReceivedAt,
-    },
+    stats: this.stats,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };
@@ -402,18 +589,40 @@ userSchema.methods.getPublicData = function () {
 
 // ========== MÉTODOS ESTÁTICOS ==========
 
-// Ranking de usuários (com tratamento de erro)
+// Ranking de usuários
 userSchema.statics.getRanking = function (limit = 100, skip = 0) {
-  return this.find({ status: "active" })
-    .sort({ coins: -1, totalDonated: -1, name: 1 })
+  return this.find({ status: "active", isActive: true })
+    .sort({ score: -1, totalDonated: -1, coins: -1, name: 1 })
     .select(
-      "name username fullName avatar institution coins level totalDonated totalReceived stats createdAt"
+      "name username fullName avatar institution coins level xp score totalDonated totalReceived stats createdAt"
     )
-    .limit(Math.min(limit, 1000)) // Limite máximo de segurança
+    .limit(Math.min(limit, 1000))
     .skip(Math.max(0, skip));
 };
 
-// Buscar usuários (melhorado)
+// Método para obter posição no ranking
+userSchema.statics.getUserRank = async function (userId) {
+  const user = await this.findById(userId);
+  if (!user) return null;
+
+  const rank = await this.countDocuments({
+    isActive: true,
+    status: "active",
+    $or: [
+      { score: { $gt: user.score } },
+      { score: user.score, totalDonated: { $gt: user.totalDonated } },
+      {
+        score: user.score,
+        totalDonated: user.totalDonated,
+        coins: { $gt: user.coins },
+      },
+    ],
+  });
+
+  return rank + 1;
+};
+
+// Buscar usuários
 userSchema.statics.searchUsers = function (query, currentUserId, options = {}) {
   const { limit = 20, skip = 0 } = options;
 
@@ -427,6 +636,7 @@ userSchema.statics.searchUsers = function (query, currentUserId, options = {}) {
     $and: [
       { _id: { $ne: currentUserId } },
       { status: "active" },
+      { isActive: true },
       { "blockedUsers.user": { $ne: currentUserId } },
       {
         $or: [
@@ -439,10 +649,10 @@ userSchema.statics.searchUsers = function (query, currentUserId, options = {}) {
     ],
   })
     .select(
-      "name fullName username avatar institution coins level stats totalDonated totalReceived"
+      "name fullName username avatar institution coins level xp score stats totalDonated totalReceived"
     )
-    .sort({ coins: -1, totalDonated: -1, name: 1 })
-    .limit(Math.min(limit, 100)) // Limite máximo de segurança
+    .sort({ score: -1, coins: -1, totalDonated: -1, name: 1 })
+    .limit(Math.min(limit, 100))
     .skip(Math.max(0, skip));
 };
 
@@ -466,6 +676,14 @@ userSchema.statics.fixDataIntegrity = async function () {
       }
       if (user.totalReceived < 0) {
         user.totalReceived = 0;
+        needsUpdate = true;
+      }
+      if (user.xp < 0) {
+        user.xp = 0;
+        needsUpdate = true;
+      }
+      if (user.score < 0) {
+        user.score = 0;
         needsUpdate = true;
       }
 

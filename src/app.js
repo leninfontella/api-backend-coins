@@ -8,7 +8,8 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/userRoutes");
 const donationRoutes = require("./routes/donations");
-const rankingRoutes = require("./routes/rankingRoutes"); // ← Nova rota
+const rankingRoutes = require("./routes/rankingRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes"); // ← Nova rota
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
@@ -61,7 +62,8 @@ app.use("/api/auth/", authLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/users", userRoutes);
-app.use("/api/ranking", rankingRoutes); // ← Nova rota de ranking
+app.use("/api/ranking", rankingRoutes);
+app.use("/api/dashboard", dashboardRoutes); // ← Nova rota de dashboard
 
 // Rota principal
 app.get("/", (req, res) => {
@@ -74,7 +76,8 @@ app.get("/", (req, res) => {
       userCoins: true,
       rateLimiting: true,
       security: true,
-      ranking: true, // ← Nova feature
+      ranking: true,
+      dashboard: true, // ← Nova feature
     },
     endpoints: [
       "GET  /",
@@ -91,12 +94,16 @@ app.get("/", (req, res) => {
       "POST /api/users/update-balance",
       "GET  /api/users/stats",
       "GET  /api/users/search",
-      // Ranking endpoints ← Novos
+      // Ranking endpoints
       "GET  /api/ranking",
       "GET  /api/ranking/top10",
       "GET  /api/ranking/my-position",
       "GET  /api/ranking/around-me",
       "GET  /api/ranking/stats",
+      // Dashboard endpoints ← Novos
+      "GET  /api/dashboard",
+      "PUT  /api/dashboard/goal",
+      "GET  /api/dashboard/interactions",
     ],
   });
 });
@@ -115,6 +122,7 @@ app.get("/api/health", (req, res) => {
       rateLimiting: true,
       security: true,
       ranking: true,
+      dashboard: true,
     },
   });
 });
