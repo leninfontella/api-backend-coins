@@ -5,7 +5,6 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js"
-    
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -16,15 +15,16 @@
     "express": "^4.21.2",
     "express-rate-limit": "^6.7.0",
     "express-validator": "^6.15.0",
+    "fs": "^0.0.1-security",
     "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^7.8.7",
     "mongoose-sequence": "^6.0.1",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "multer": "^2.0.2",
+    "path": "^0.12.7"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"
   }
 }
-
- 
