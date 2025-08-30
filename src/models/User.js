@@ -318,9 +318,10 @@ userSchema.virtual("firstName").get(function () {
 });
 
 // Virtual para URL completa da foto - VERSÃO CORRIGIDA
+
 userSchema.virtual("profilePhotoUrl").get(function () {
   if (this.profilePhoto && this.profilePhoto.filename) {
-    return `/uploads/profiles/${this.profilePhoto.filename}`;
+    return `${process.env.BASE_URL}/uploads/profiles/${this.profilePhoto.filename}`;
   }
   return null;
 });
