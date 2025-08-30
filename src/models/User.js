@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
       required: [true, "Nome é obrigatório"],
       trim: true,
       minlength: [2, "Nome deve ter pelo menos 2 caracteres"],
-      maxlength: [50, "Nome não pode exceder 50 caracteres"],
+      maxlength: [100, "Nome não pode exceder 100 caracteres"],
     },
     email: {
       type: String,
@@ -35,11 +35,28 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       trim: true,
+      maxlength: [20, "Telefone não pode ter mais de 20 caracteres"],
       default: "",
       match: [
         /^(\+55\s?)?(\(?[1-9]{2}\)?\s?)?9?[0-9]{4}[-\s]?[0-9]{4}$/,
         "Telefone inválido",
       ],
+    },
+
+    // ========== FOTO DE PERFIL ==========
+    profilePhoto: {
+      filename: {
+        type: String,
+        default: null,
+      },
+      path: {
+        type: String,
+        default: null,
+      },
+      uploadDate: {
+        type: Date,
+        default: null,
+      },
     },
 
     // ========== CAMPOS PARA SISTEMA DE BUSCA ==========
@@ -65,7 +82,7 @@ const userSchema = new mongoose.Schema(
     // ========== SISTEMA DE MOEDAS E GAMIFICAÇÃO ==========
     coins: {
       type: Number,
-      default: 1000, // Valor inicial aumentado
+      default: 100, // Valor inicial do Claude
       min: [0, "Saldo não pode ser negativo"],
       max: [10000000, "Saldo máximo excedido"],
       validate: {
@@ -126,6 +143,13 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    // Compatibilidade com o código do Claude
+    totalDonations: {
+      type: Number,
+      default: 0,
+      min: [0, "Total de doações não pode ser negativo"],
+    },
+
     // Metas e objetivos
     monthlyGoal: {
       type: Number,
@@ -162,6 +186,22 @@ const userSchema = new mongoose.Schema(
     verificationToken: String,
     resetPasswordToken: String,
     resetPasswordExpires: Date,
+
+    // ========== AUTENTICAÇÃO ==========
+    lastLogin: {
+      type: Date,
+      default: Date.now,
+    },
+    refreshTokens: [
+      {
+        token: String,
+        createdAt: {
+          type: Date,
+          default: Date.now,
+          expires: 604800, // 7 dias
+        },
+      },
+    ],
 
     // ========== ESTATÍSTICAS DETALHADAS ==========
     stats: {
@@ -231,7 +271,6 @@ const userSchema = new mongoose.Schema(
     },
 
     // ========== AUDITORIA E SEGURANÇA ==========
-    lastLogin: Date,
     loginCount: { type: Number, default: 0 },
     ipAddress: String,
     userAgent: String,
@@ -253,6 +292,7 @@ const userSchema = new mongoose.Schema(
         delete ret.password;
         delete ret.verificationToken;
         delete ret.resetPasswordToken;
+        delete ret.refreshTokens;
         return ret;
       },
     },
@@ -275,6 +315,15 @@ userSchema.index({ createdAt: -1 });
 // ========== VIRTUALS ==========
 userSchema.virtual("firstName").get(function () {
   return this.name ? this.name.split(" ")[0] : "";
+});
+
+// Virtual para URL completa da foto
+userSchema.virtual("profilePhotoUrl").get(function () {
+  if (this.profilePhoto && this.profilePhoto.filename) {
+    const basePath = `/uploads/profiles/${this.profilePhoto.filename}`;
+    return process.env.BASE_URL ? process.env.BASE_URL + basePath : basePath;
+  }
+  return null;
 });
 
 userSchema.virtual("levelProgress").get(function () {
@@ -310,6 +359,7 @@ userSchema.pre("save", function (next) {
     this.coins = Math.max(0, this.coins || 0);
     this.totalDonated = Math.max(0, this.totalDonated || 0);
     this.totalReceived = Math.max(0, this.totalReceived || 0);
+    this.totalDonations = Math.max(0, this.totalDonations || 0);
     this.xp = Math.max(0, this.xp || 0);
     this.score = Math.max(0, this.score || 0);
 
@@ -320,6 +370,9 @@ userSchema.pre("save", function (next) {
     this.stats.receivedCount = this.stats.donationsReceived;
     this.stats.lastDonationDate = this.stats.lastDonationAt;
     this.stats.lastReceivedDate = this.stats.lastReceivedAt;
+
+    // Sincronizar totalDonations com totalDonated
+    this.totalDonations = this.totalDonated;
 
     // Atualizar level se necessário
     if (
@@ -350,6 +403,23 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
     return await bcrypt.compare(candidatePassword, this.password);
   } catch (error) {
     throw new Error("Erro ao comparar senhas");
+  }
+};
+
+// Método para remover foto anterior
+userSchema.methods.removeOldProfilePhoto = function () {
+  if (this.profilePhoto && this.profilePhoto.filename) {
+    const fs = require("fs");
+    const path = require("path");
+    const oldPath = path.join(
+      __dirname,
+      "../uploads/profiles",
+      this.profilePhoto.filename
+    );
+
+    fs.unlink(oldPath, (err) => {
+      if (err) console.log("Erro ao remover foto antiga:", err);
+    });
   }
 };
 
@@ -446,6 +516,7 @@ userSchema.methods.updateCoins = async function (amount, operation = "other") {
   if (operation === "donation" && amount < 0) {
     const donatedAmount = Math.abs(amount);
     this.totalDonated += donatedAmount;
+    this.totalDonations += donatedAmount; // Sincronização
     this.stats.donationsSent += 1;
     this.stats.totalDonated = this.totalDonated;
     this.stats.lastDonationAt = new Date();
@@ -573,6 +644,7 @@ userSchema.methods.getPublicData = function () {
     username: this.username,
     email: this.email,
     avatar: this.avatar,
+    profilePhotoUrl: this.profilePhotoUrl,
     institution: this.institution,
     coins: this.coins,
     level: this.level,
@@ -581,6 +653,7 @@ userSchema.methods.getPublicData = function () {
     score: this.score,
     totalDonated: this.totalDonated,
     totalReceived: this.totalReceived,
+    totalDonations: this.totalDonations,
     stats: this.stats,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
@@ -594,7 +667,7 @@ userSchema.statics.getRanking = function (limit = 100, skip = 0) {
   return this.find({ status: "active", isActive: true })
     .sort({ score: -1, totalDonated: -1, coins: -1, name: 1 })
     .select(
-      "name username fullName avatar institution coins level xp score totalDonated totalReceived stats createdAt"
+      "name username fullName avatar profilePhotoUrl institution coins level xp score totalDonated totalReceived totalDonations stats createdAt"
     )
     .limit(Math.min(limit, 1000))
     .skip(Math.max(0, skip));
@@ -649,7 +722,7 @@ userSchema.statics.searchUsers = function (query, currentUserId, options = {}) {
     ],
   })
     .select(
-      "name fullName username avatar institution coins level xp score stats totalDonated totalReceived"
+      "name fullName username avatar profilePhotoUrl institution coins level xp score stats totalDonated totalReceived totalDonations"
     )
     .sort({ score: -1, coins: -1, totalDonated: -1, name: 1 })
     .limit(Math.min(limit, 100))
@@ -694,6 +767,12 @@ userSchema.statics.fixDataIntegrity = async function () {
       }
       if (user.stats.totalReceived !== user.totalReceived) {
         user.stats.totalReceived = user.totalReceived;
+        needsUpdate = true;
+      }
+
+      // Sincronizar totalDonations
+      if (user.totalDonations !== user.totalDonated) {
+        user.totalDonations = user.totalDonated;
         needsUpdate = true;
       }
 

@@ -28,6 +28,12 @@ router.post(
   authController.login
 );
 
+// Adicionado: Rota para verificar o status de autenticação
+router.get("/check", protect, (req, res) => {
+  // Se o middleware `protect` passar, o token é válido
+  res.status(200).json({ success: true, message: "Usuário autenticado" });
+});
+
 router.post("/refresh", authController.refreshToken);
 router.post("/logout", authController.logout);
 router.get("/me", protect, authController.me);

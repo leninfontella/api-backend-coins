@@ -4,17 +4,18 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const cookieParser = require("cookie-parser");
+const path = require("path");
 
 const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/userRoutes");
 const donationRoutes = require("./routes/donations");
 const rankingRoutes = require("./routes/rankingRoutes");
-const dashboardRoutes = require("./routes/dashboardRoutes"); // ← Nova rota
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const profileRoutes = require("./routes/profileRoutes");
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-// Lista de origens permitidas
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:5500",
@@ -22,7 +23,6 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
 ];
 
-// Configuração de CORS
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -38,16 +38,29 @@ app.use(
   })
 );
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
 app.use(morgan("dev"));
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// Rate limiter básico
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: {
+    success: false,
+    message: "Muitas requisições. Tente novamente em 15 minutos.",
+  },
+});
 app.use(limiter);
 
-// Rate limiter específico para auth
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -58,12 +71,23 @@ const authLimiter = rateLimit({
 });
 app.use("/api/auth/", authLimiter);
 
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    success: false,
+    message: "Muitos uploads. Tente novamente em 15 minutos.",
+  },
+});
+app.use("/api/profile/upload-photo", uploadLimiter);
+
 // ========== ROTAS ==========
 app.use("/api/auth", authRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/ranking", rankingRoutes);
-app.use("/api/dashboard", dashboardRoutes); // ← Nova rota de dashboard
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/profile", profileRoutes);
 
 // Rota principal
 app.get("/", (req, res) => {
@@ -77,7 +101,8 @@ app.get("/", (req, res) => {
       rateLimiting: true,
       security: true,
       ranking: true,
-      dashboard: true, // ← Nova feature
+      dashboard: true,
+      profileUpload: true,
     },
     endpoints: [
       "GET  /",
@@ -85,6 +110,7 @@ app.get("/", (req, res) => {
       // Auth endpoints
       "POST /api/auth/register",
       "POST /api/auth/login",
+      "GET  /api/auth/check",
       "POST /api/auth/refresh-token",
       "POST /api/auth/logout",
       "GET  /api/auth/me",
@@ -100,10 +126,14 @@ app.get("/", (req, res) => {
       "GET  /api/ranking/my-position",
       "GET  /api/ranking/around-me",
       "GET  /api/ranking/stats",
-      // Dashboard endpoints ← Novos
+      // Dashboard endpoints
       "GET  /api/dashboard",
       "PUT  /api/dashboard/goal",
       "GET  /api/dashboard/interactions",
+      // Profile endpoints
+      "PUT  /api/profile",
+      "POST /api/profile/upload-photo",
+      "DELETE /api/profile/photo",
     ],
   });
 });
@@ -123,11 +153,19 @@ app.get("/api/health", (req, res) => {
       security: true,
       ranking: true,
       dashboard: true,
+      profileUpload: true,
     },
   });
 });
 
-// Error handler (deve ser o último middleware)
+app.use("*", (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Rota ${req.method} ${req.originalUrl} não encontrada`,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.use(errorHandler);
 
 module.exports = app;
