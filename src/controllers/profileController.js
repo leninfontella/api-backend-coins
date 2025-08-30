@@ -30,23 +30,61 @@ const profileController = {
       }
 
       // Atualizar dados básicos
-      if (name) user.name = name;
-      if (email) user.email = email;
-      if (phone) user.phone = phone;
+      if (name && name.trim()) user.name = name.trim();
+      if (email && email.trim()) user.email = email.trim().toLowerCase();
+      if (phone !== undefined) user.phone = phone.trim();
 
-      // O comando abaixo garante que o Mongoose não valide o 'level'
-      // ao salvar, pois ele não deve ser alterado aqui.
-      // O 'validateModifiedOnly' pode ser usado no modelo para validação mais seletiva.
       await user.save();
 
-      // Corrigido: Retorna o objeto de usuário atualizado para o frontend
+      // Preparar dados atualizados do usuário para resposta
+      const updatedUser = {
+        id: user._id,
+        name: user.name,
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        profilePhotoUrl: user.profilePhotoUrl, // Virtual já inclui a URL completa
+        avatar: user.avatar,
+        institution: user.institution,
+        coins: user.coins,
+        level: user.level,
+        xp: user.xp,
+        maxXp: user.maxXp,
+        score: user.score,
+        totalDonated: user.totalDonated,
+        totalReceived: user.totalReceived,
+        totalDonations: user.totalDonations,
+        stats: user.stats,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+
       res.json({
         success: true,
         message: "Perfil atualizado com sucesso!",
-        user: user.toObject(),
+        user: updatedUser,
+        profilePhoto: req.processedImage
+          ? {
+              url: user.profilePhotoUrl,
+              filename: user.profilePhoto.filename,
+            }
+          : undefined,
       });
     } catch (error) {
       console.error("Erro ao atualizar o perfil:", error);
+
+      // Se houve erro e uma imagem foi processada, remover o arquivo
+      if (req.processedImage) {
+        const filepath = path.join(
+          __dirname,
+          "../uploads/profiles",
+          req.processedImage.filename
+        );
+        fs.unlink(filepath, (err) => {
+          if (err) console.log("Erro ao remover arquivo após falha:", err);
+        });
+      }
+
       res.status(500).json({
         success: false,
         message: "Erro interno do servidor ao atualizar perfil.",
@@ -63,6 +101,18 @@ const profileController = {
       const user = await User.findById(userId);
 
       if (!user) {
+        // Remover arquivo se usuário não existe
+        if (req.processedImage) {
+          const filepath = path.join(
+            __dirname,
+            "../uploads/profiles",
+            req.processedImage.filename
+          );
+          fs.unlink(filepath, (err) => {
+            if (err) console.log("Erro ao remover arquivo:", err);
+          });
+        }
+
         return res.status(404).json({
           success: false,
           message: "Usuário não encontrado",
@@ -88,15 +138,16 @@ const profileController = {
 
       await user.save();
 
-      // Retornar a URL completa da imagem para o frontend
-      const profilePhotoUrl = `/uploads/profiles/${user.profilePhoto.filename}`;
-
       res.status(200).json({
         success: true,
         message: "Foto de perfil atualizada com sucesso!",
         profilePhoto: {
-          url: profilePhotoUrl,
+          url: user.profilePhotoUrl, // Virtual já inclui a URL completa
           filename: user.profilePhoto.filename,
+        },
+        user: {
+          id: user._id,
+          profilePhotoUrl: user.profilePhotoUrl,
         },
       });
     } catch (error) {
@@ -151,9 +202,67 @@ const profileController = {
       res.json({
         success: true,
         message: "Foto de perfil removida com sucesso",
+        user: {
+          id: user._id,
+          profilePhotoUrl: null,
+        },
       });
     } catch (error) {
       console.error("Erro ao remover foto de perfil:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro interno do servidor",
+        error:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  },
+
+  // Novo método para obter dados do perfil
+  async getProfile(req, res) {
+    try {
+      const userId = req.user.id;
+      const user = await User.findById(userId).select(
+        "-password -refreshTokens -verificationToken -resetPasswordToken"
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "Usuário não encontrado",
+        });
+      }
+
+      const userData = {
+        id: user._id,
+        name: user.name,
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        profilePhotoUrl: user.profilePhotoUrl, // Virtual já inclui a URL completa
+        avatar: user.avatar,
+        institution: user.institution,
+        coins: user.coins,
+        level: user.level,
+        xp: user.xp,
+        maxXp: user.maxXp,
+        score: user.score,
+        totalDonated: user.totalDonated,
+        totalReceived: user.totalReceived,
+        totalDonations: user.totalDonations,
+        stats: user.stats,
+        preferences: user.preferences,
+        settings: user.settings,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+
+      res.json({
+        success: true,
+        user: userData,
+      });
+    } catch (error) {
+      console.error("Erro ao obter perfil:", error);
       res.status(500).json({
         success: false,
         message: "Erro interno do servidor",

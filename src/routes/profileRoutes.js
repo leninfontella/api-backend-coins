@@ -7,6 +7,9 @@ const authMiddleware = require("../middleware/authMiddleware");
 // Middleware de autenticação aplicado a todas as rotas
 router.use(authMiddleware);
 
+// Obter dados do perfil
+router.get("/", profileController.getProfile);
+
 // Atualizar perfil completo (com ou sem foto)
 router.put("/", upload, processProfileImage, profileController.updateProfile);
 

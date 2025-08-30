@@ -317,11 +317,10 @@ userSchema.virtual("firstName").get(function () {
   return this.name ? this.name.split(" ")[0] : "";
 });
 
-// Virtual para URL completa da foto
+// Virtual para URL completa da foto - VERSÃO CORRIGIDA
 userSchema.virtual("profilePhotoUrl").get(function () {
   if (this.profilePhoto && this.profilePhoto.filename) {
-    const basePath = `/uploads/profiles/${this.profilePhoto.filename}`;
-    return process.env.BASE_URL ? process.env.BASE_URL + basePath : basePath;
+    return `/uploads/profiles/${this.profilePhoto.filename}`;
   }
   return null;
 });
@@ -351,6 +350,25 @@ userSchema.pre("save", async function (next) {
   } catch (error) {
     next(error);
   }
+});
+
+// Middleware adicional para limpar dados de foto inválidos
+userSchema.pre("save", function (next) {
+  // Se há dados de foto mas o arquivo não existe, limpar os dados
+  if (this.profilePhoto && this.profilePhoto.filename) {
+    if (!this.profilePhotoExists()) {
+      console.log(
+        `Foto ${this.profilePhoto.filename} não encontrada, limpando dados`
+      );
+      this.profilePhoto = {
+        filename: null,
+        path: null,
+        uploadDate: null,
+      };
+    }
+  }
+
+  next();
 });
 
 userSchema.pre("save", function (next) {
@@ -420,6 +438,44 @@ userSchema.methods.removeOldProfilePhoto = function () {
     fs.unlink(oldPath, (err) => {
       if (err) console.log("Erro ao remover foto antiga:", err);
     });
+  }
+};
+
+// Método adicional para obter URL da foto com domínio completo
+userSchema.methods.getProfilePhotoFullUrl = function (baseUrl) {
+  if (this.profilePhoto && this.profilePhoto.filename) {
+    const filename = this.profilePhoto.filename;
+    const basePath = `/uploads/profiles/${filename}`;
+
+    if (baseUrl) {
+      const cleanBaseUrl = baseUrl.replace(/\/$/, "");
+      return `${cleanBaseUrl}${basePath}`;
+    }
+
+    return basePath;
+  }
+  return null;
+};
+
+// Método para verificar se a foto existe no sistema de arquivos
+userSchema.methods.profilePhotoExists = function () {
+  if (!this.profilePhoto || !this.profilePhoto.filename) {
+    return false;
+  }
+
+  const fs = require("fs");
+  const path = require("path");
+
+  try {
+    const photoPath = path.join(
+      __dirname,
+      "../uploads/profiles",
+      this.profilePhoto.filename
+    );
+    return fs.existsSync(photoPath);
+  } catch (error) {
+    console.error("Erro ao verificar existência da foto:", error);
+    return false;
   }
 };
 

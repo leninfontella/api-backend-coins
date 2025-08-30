@@ -92,20 +92,12 @@ exports.login = async (req, res, next) => {
 
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
-    // ========== MODIFICADO: Incluir dados completos de moedas na resposta ==========
+    // ✅ Usar toJSON para incluir virtuals (como profilePhotoUrl)
     res.json({
       success: true,
       message: "Login realizado com sucesso!",
       data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          coins: user.coins,
-          level: user.level,
-          totalDonated: user.totalDonated,
-          totalReceived: user.totalReceived,
-        },
+        user: user.toJSON(), // <-- inclui profilePhotoUrl automaticamente
         accessToken,
       },
     });
@@ -174,11 +166,17 @@ exports.logout = async (req, res, next) => {
 // ========== MODIFICADO: Incluir dados de moedas na resposta do me ==========
 exports.me = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Usuário não encontrado" });
+    }
+
     res.json({
       success: true,
       data: {
-        user: user.getPublicData(), // Usar o método que criamos no model
+        user: user.toJSON(), // ✅ inclui virtuals como profilePhotoUrl
       },
     });
   } catch (err) {
