@@ -71,15 +71,37 @@ const authLimiter = rateLimit({
 });
 app.use("/api/auth/", authLimiter);
 
+// 🔧 CORREÇÃO: Rate limit mais generoso para uploads de foto
 const uploadLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20, // 20 uploads por 15 minutos (mais generoso)
   message: {
     success: false,
-    message: "Muitos uploads. Tente novamente em 15 minutos.",
+    message: "Muitos uploads de foto. Tente novamente em 15 minutos.",
   },
 });
+
+// 🔧 CRÍTICO: Aplicar rate limit específico apenas para uploads de foto
 app.use("/api/profile/upload-photo", uploadLimiter);
+
+// Rate limit mais restritivo para atualizações completas do perfil
+const profileUpdateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // 10 atualizações completas por 15 minutos
+  message: {
+    success: false,
+    message: "Muitas atualizações de perfil. Tente novamente em 15 minutos.",
+  },
+});
+
+// Aplicar ao endpoint de atualização completa
+app.use("/api/profile", (req, res, next) => {
+  // Aplicar rate limit apenas para PUT (atualização completa)
+  if (req.method === "PUT") {
+    return profileUpdateLimiter(req, res, next);
+  }
+  next();
+});
 
 // ========== ROTAS ==========
 app.use("/api/auth", authRoutes);
@@ -103,6 +125,7 @@ app.get("/", (req, res) => {
       ranking: true,
       dashboard: true,
       profileUpload: true,
+      separatePhotoUpload: true, // 🔧 Nova feature
     },
     endpoints: [
       "GET  /",
@@ -131,8 +154,9 @@ app.get("/", (req, res) => {
       "PUT  /api/dashboard/goal",
       "GET  /api/dashboard/interactions",
       // Profile endpoints
-      "PUT  /api/profile",
-      "POST /api/profile/upload-photo",
+      "GET  /api/profile",
+      "PUT  /api/profile", // Atualização completa
+      "POST /api/profile/upload-photo", // 🔧 Upload apenas de foto
       "DELETE /api/profile/photo",
     ],
   });
@@ -154,6 +178,7 @@ app.get("/api/health", (req, res) => {
       ranking: true,
       dashboard: true,
       profileUpload: true,
+      separatePhotoUpload: true,
     },
   });
 });

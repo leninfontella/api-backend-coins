@@ -10,16 +10,18 @@ router.use(authMiddleware);
 // Obter dados do perfil
 router.get("/", profileController.getProfile);
 
-// Atualizar perfil completo (com ou sem foto)
-router.put("/", upload, processProfileImage, profileController.updateProfile);
+// 🔧 SEPARAÇÃO DE ENDPOINTS PARA EVITAR CONFLITOS
 
-// Upload apenas da foto
+// Upload APENAS da foto (endpoint específico)
 router.post(
   "/upload-photo",
   upload,
   processProfileImage,
   profileController.uploadProfilePhoto
 );
+
+// Atualizar perfil completo (com ou sem foto) - com validação
+router.put("/", upload, processProfileImage, profileController.updateProfile);
 
 // Remover foto de perfil
 router.delete("/photo", profileController.removeProfilePhoto);

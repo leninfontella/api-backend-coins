@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 
 const profileController = {
-  // Atualizar perfil com foto
+  // Atualizar perfil completo (com validação de proprietário)
   async updateProfile(req, res) {
     try {
       const userId = req.user.id;
@@ -18,6 +18,22 @@ const profileController = {
         });
       }
 
+      // 🔧 VALIDAÇÃO CRÍTICA: Verificar se o email pertence ao usuário atual
+      if (email && email.toLowerCase() !== user.email.toLowerCase()) {
+        // Verificar se o novo email já existe em outro usuário
+        const existingUser = await User.findOne({
+          email: email.toLowerCase(),
+          _id: { $ne: userId },
+        });
+
+        if (existingUser) {
+          return res.status(400).json({
+            success: false,
+            message: "Este email já está em uso por outro usuário",
+          });
+        }
+      }
+
       // Se há uma nova foto, remover a anterior
       if (req.processedImage) {
         user.removeOldProfilePhoto();
@@ -29,7 +45,7 @@ const profileController = {
         };
       }
 
-      // Atualizar dados básicos
+      // Atualizar apenas dados básicos validados
       if (name && name.trim()) user.name = name.trim();
       if (email && email.trim()) user.email = email.trim().toLowerCase();
       if (phone !== undefined) user.phone = phone.trim();
@@ -43,7 +59,7 @@ const profileController = {
         fullName: user.fullName,
         email: user.email,
         phone: user.phone,
-        profilePhotoUrl: user.profilePhotoUrl, // Virtual já inclui a URL completa
+        profilePhotoUrl: user.profilePhotoUrl,
         avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
@@ -85,6 +101,14 @@ const profileController = {
         });
       }
 
+      // Tratamento específico para erro de email duplicado
+      if (error.code === 11000) {
+        return res.status(400).json({
+          success: false,
+          message: "Este email já está em uso por outro usuário",
+        });
+      }
+
       res.status(500).json({
         success: false,
         message: "Erro interno do servidor ao atualizar perfil.",
@@ -94,7 +118,7 @@ const profileController = {
     }
   },
 
-  // Upload apenas da foto
+  // 🔧 NOVO MÉTODO: Upload apenas da foto (sem outros dados)
   async uploadProfilePhoto(req, res) {
     try {
       const userId = req.user.id;
@@ -129,7 +153,7 @@ const profileController = {
       // Remover foto antiga
       user.removeOldProfilePhoto();
 
-      // Salvar nova foto no banco
+      // Salvar nova foto no banco (APENAS A FOTO, sem tocar em outros campos)
       user.profilePhoto = {
         filename: req.processedImage.filename,
         path: req.processedImage.path,
@@ -142,7 +166,7 @@ const profileController = {
         success: true,
         message: "Foto de perfil atualizada com sucesso!",
         profilePhoto: {
-          url: user.profilePhotoUrl, // Virtual já inclui a URL completa
+          url: user.profilePhotoUrl,
           filename: user.profilePhoto.filename,
         },
         user: {
@@ -218,7 +242,7 @@ const profileController = {
     }
   },
 
-  // Novo método para obter dados do perfil
+  // Obter dados do perfil
   async getProfile(req, res) {
     try {
       const userId = req.user.id;
@@ -239,7 +263,7 @@ const profileController = {
         fullName: user.fullName,
         email: user.email,
         phone: user.phone,
-        profilePhotoUrl: user.profilePhotoUrl, // Virtual já inclui a URL completa
+        profilePhotoUrl: user.profilePhotoUrl,
         avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
