@@ -3,7 +3,7 @@ const sharp = require("sharp");
 const path = require("path");
 const fs = require("fs");
 
-// 🆕 IMPORT PARA CACHE
+// IMPORT PARA CACHE EM MEMÓRIA
 const serverCache = require("../utils/serverCache");
 
 // Criar diretório de uploads se não existir
@@ -42,6 +42,20 @@ const upload = multer({
   },
 });
 
+// Função utilitária para invalidar cache HTTP
+const invalidateHttpCache = (filename) => {
+  try {
+    const filePath = path.join(uploadsDir, filename);
+    if (fs.existsSync(filePath)) {
+      const now = new Date();
+      fs.utimesSync(filePath, now, now);
+      console.log(`🔄 Cache HTTP invalidado: ${filename}`);
+    }
+  } catch (error) {
+    console.error("Erro ao invalidar cache HTTP:", error);
+  }
+};
+
 // Middleware para processar e salvar a imagem
 const processProfileImage = async (req, res, next) => {
   if (!req.file) {
@@ -51,12 +65,18 @@ const processProfileImage = async (req, res, next) => {
   try {
     console.log(`📤 Processando upload de imagem para usuário: ${req.user.id}`);
 
-    // 🆕 INVALIDAR CACHE DA IMAGEM ANTIGA ANTES DE PROCESSAR
+    // INVALIDAR CACHES DA IMAGEM ANTIGA ANTES DE PROCESSAR
     if (req.user.profileImage) {
       const oldImagePath = `/uploads/profiles/${req.user.profileImage}`;
+
+      // Invalidar cache em memória
       serverCache.invalidate(oldImagePath);
+
+      // Invalidar cache HTTP
+      invalidateHttpCache(req.user.profileImage);
+
       console.log(
-        `🔄 Cache invalidado para imagem antiga: ${req.user.profileImage}`
+        `🔄 Caches invalidados para imagem antiga: ${req.user.profileImage}`
       );
 
       // Remover arquivo físico antigo
@@ -69,7 +89,6 @@ const processProfileImage = async (req, res, next) => {
           console.error(
             `⚠️  Erro ao remover arquivo antigo: ${unlinkError.message}`
           );
-          // Não interrompe o processo se não conseguir remover o arquivo antigo
         }
       }
     }
@@ -103,7 +122,7 @@ const processProfileImage = async (req, res, next) => {
       throw new Error("Falha ao criar arquivo de imagem");
     }
 
-    // 🆕 PRÉ-CARREGAR A NOVA IMAGEM NO CACHE
+    // PRÉ-CARREGAR A NOVA IMAGEM NO CACHE EM MEMÓRIA
     const newImagePath = `/uploads/profiles/${filename}`;
     serverCache.set(newImagePath, imageBuffer, "image/webp", stats.size);
     console.log(`💾 Nova imagem pré-carregada no cache: ${filename}`);
@@ -118,7 +137,8 @@ const processProfileImage = async (req, res, next) => {
       originalSize: req.file.size,
       mimetype: "image/webp",
       processedAt: new Date(),
-      cached: true, // 🆕 Indicador de que foi cacheada
+      cached: true,
+      mtime: stats.mtime,
     };
 
     console.log(
@@ -129,7 +149,7 @@ const processProfileImage = async (req, res, next) => {
   } catch (error) {
     console.error("❌ Erro ao processar imagem:", error);
 
-    // 🆕 LIMPAR CACHE EM CASO DE ERRO
+    // LIMPAR CACHES EM CASO DE ERRO
     if (req.processedImage && req.processedImage.path) {
       serverCache.invalidate(req.processedImage.path);
     }
@@ -222,7 +242,7 @@ const validateImageDimensions = async (req, res, next) => {
   }
 };
 
-// 🆕 MIDDLEWARE PARA LIMPEZA DE IMAGENS ANTIGAS (OPCIONAL)
+// Middleware para limpeza de imagens antigas (opcional)
 const cleanupOldImages = async (req, res, next) => {
   try {
     // Executar limpeza apenas ocasionalmente (1% de chance)
@@ -264,7 +284,7 @@ const cleanupOldImages = async (req, res, next) => {
   next();
 };
 
-// 🆕 FUNÇÃO UTILITÁRIA PARA INVALIDAR CACHE DE USUÁRIO
+// Função utilitária para invalidar cache de usuário
 const invalidateUserCache = (userId) => {
   try {
     const pattern = `profile-${userId}-`;
@@ -277,7 +297,7 @@ const invalidateUserCache = (userId) => {
   }
 };
 
-// 🆕 FUNÇÃO PARA VERIFICAR SAÚDE DO SISTEMA DE UPLOAD
+// Função para verificar saúde do sistema de upload
 const getUploadHealth = () => {
   try {
     const dirExists = fs.existsSync(uploadsDir);
@@ -290,7 +310,7 @@ const getUploadHealth = () => {
       directory: uploadsDir,
       totalFiles: files.length,
       profileImages: profileFiles.length,
-      diskSpace: "N/A", // Pode ser implementado com libraries específicas
+      diskSpace: "N/A",
       cacheStats: serverCache.getStats(),
     };
   } catch (error) {
@@ -301,81 +321,13 @@ const getUploadHealth = () => {
   }
 };
 
-/**
- * Middleware para cache HTTP de imagens de perfil
- * Reduz requisições desnecessárias usando headers HTTP
- */
-const imageCache = (req, res, next) => {
-  const filePath = req.path;
-
-  // Aplica apenas para imagens de perfil
-  if (filePath.includes("/uploads/profiles/")) {
-    console.log(`🖼️  Cache middleware para: ${filePath}`);
-
-    try {
-      const fullPath = path.join(__dirname, "..", filePath);
-
-      // Verifica se arquivo existe
-      if (fs.existsSync(fullPath)) {
-        const stats = fs.statSync(fullPath);
-        const etag = `"${stats.mtime.getTime()}-${stats.size}"`;
-        const lastModified = stats.mtime.toUTCString();
-
-        // Define headers de cache
-        res.set({
-          "Cache-Control": "public, max-age=3600", // 1 hora
-          ETag: etag,
-          "Last-Modified": lastModified,
-          Expires: new Date(Date.now() + 3600000).toUTCString(),
-          Vary: "Accept-Encoding",
-        });
-
-        // Se browser já tem a imagem (mesmo ETag)
-        if (req.headers["if-none-match"] === etag) {
-          console.log(`✅ Cache HIT (ETag): ${path.basename(filePath)}`);
-          return res.status(304).end();
-        }
-
-        // Se arquivo não foi modificado
-        if (req.headers["if-modified-since"]) {
-          const clientDate = new Date(req.headers["if-modified-since"]);
-          if (stats.mtime <= clientDate) {
-            console.log(`✅ Cache HIT (Modified): ${path.basename(filePath)}`);
-            return res.status(304).end();
-          }
-        }
-
-        console.log(`❌ Cache MISS: ${path.basename(filePath)}`);
-      }
-    } catch (error) {
-      console.error("Erro no cache middleware:", error);
-    }
-  }
-
-  next();
-};
-
-/**
- * Middleware específico para invalidar cache quando necessário
- */
-const invalidateCache = (imagePath) => {
-  try {
-    console.log(`🔄 Invalidando cache para: ${imagePath}`);
-    // O cache será invalidado automaticamente quando o arquivo for modificado
-    // devido ao ETag baseado em mtime
-  } catch (error) {
-    console.error("Erro ao invalidar cache:", error);
-  }
-};
-
 module.exports = {
   upload: upload.single("profilePhoto"),
   processProfileImage,
   validateImageDimensions,
   cleanupOldImages,
   invalidateUserCache,
+  invalidateHttpCache,
   getUploadHealth,
   uploadsDir,
-  imageCache,
-  invalidateCache,
 };

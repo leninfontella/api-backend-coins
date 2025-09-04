@@ -7,8 +7,8 @@ const cookieParser = require("cookie-parser");
 const path = require("path");
 const fs = require("fs");
 
-// 🆕 IMPORTS PARA CACHE
-const { imageCache } = require("./middleware/imageCache");
+// IMPORTS PARA CACHE - CORRIGIDOS
+const { imageCache, addCacheHeaders } = require("./middleware/imageCache");
 const serverCache = require("./utils/serverCache");
 
 const authRoutes = require("./routes/auth");
@@ -18,7 +18,6 @@ const rankingRoutes = require("./routes/rankingRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const profileRoutes = require("./routes/profileRoutes");
 const errorHandler = require("./middleware/errorHandler");
-const cacheRoutes = require("./routes/cacheRoutes");
 
 const app = express();
 
@@ -55,10 +54,10 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// 🆕 MIDDLEWARE DE CACHE PARA IMAGENS
-app.use("/uploads", imageCache);
+// MIDDLEWARE DE CACHE HTTP PRIMEIRO (para todas as imagens)
+app.use("/uploads", addCacheHeaders);
 
-// 🆕 MIDDLEWARE CUSTOMIZADO PARA SERVIR IMAGENS COM CACHE EM MEMÓRIA
+// MIDDLEWARE DE CACHE EM MEMÓRIA ESPECÍFICO PARA PROFILES
 app.use("/uploads/profiles", async (req, res, next) => {
   try {
     const filename = req.path.substring(1); // Remove '/' inicial
@@ -69,10 +68,40 @@ app.use("/uploads/profiles", async (req, res, next) => {
     // Verifica cache em memória primeiro
     const cached = serverCache.get(imagePath);
     if (cached) {
-      return res.type(cached.contentType).send(cached.buffer);
+      // Define headers apropriados antes de enviar do cache
+      res.set({
+        "Content-Type": cached.contentType,
+        "Content-Length": cached.fileSize,
+        "Cache-Control": "public, max-age=3600, must-revalidate",
+        ETag: `"${cached.timestamp}-${cached.fileSize}"`,
+        "Last-Modified": new Date(cached.timestamp).toUTCString(),
+        Expires: new Date(Date.now() + 3600000).toUTCString(),
+      });
+
+      // Verifica se cliente já tem a versão atual (304 Not Modified)
+      const clientEtag = req.headers["if-none-match"];
+      const serverEtag = `"${cached.timestamp}-${cached.fileSize}"`;
+
+      if (clientEtag === serverEtag) {
+        console.log(`✅ Cache HIT + 304: ${filename}`);
+        return res.status(304).end();
+      }
+
+      // Verifica por Last-Modified
+      if (req.headers["if-modified-since"]) {
+        const clientDate = new Date(req.headers["if-modified-since"]);
+        const serverDate = new Date(cached.timestamp);
+        if (serverDate <= clientDate) {
+          console.log(`✅ Cache HIT + 304 (Modified): ${filename}`);
+          return res.status(304).end();
+        }
+      }
+
+      console.log(`✅ Cache HIT: ${filename}`);
+      return res.send(cached.buffer);
     }
 
-    // Se não está no cache, continua para express.static
+    console.log(`❌ Cache MISS: ${filename}`);
     next();
   } catch (error) {
     console.error("Erro no cache de imagem:", error);
@@ -80,33 +109,50 @@ app.use("/uploads/profiles", async (req, res, next) => {
   }
 });
 
-// 🆕 MIDDLEWARE PARA INTERCEPTAR E CACHEAR ARQUIVOS SERVIDOS
-app.use("/uploads", (req, res, next) => {
-  const originalSend = res.send;
+// MIDDLEWARE PARA INTERCEPTAR E CACHEAR ARQUIVOS SERVIDOS PELO EXPRESS.STATIC
+app.use("/uploads/profiles", (req, res, next) => {
   const originalSendFile = res.sendFile;
 
-  // Override do send para cachear
-  res.send = function (data) {
-    if (req.path.includes("profiles/") && Buffer.isBuffer(data)) {
-      const imagePath = req.path;
-      const contentType = res.get("Content-Type") || "image/webp";
-      serverCache.set(imagePath, data, contentType, data.length);
-    }
-    return originalSend.call(this, data);
-  };
+  // Override do sendFile para cachear após servir
+  res.sendFile = function (filePath, options, callback) {
+    const fileName = path.basename(filePath);
 
-  // Override do sendFile para cachear
-  res.sendFile = function (path, options, callback) {
-    if (req.path.includes("profiles/")) {
-      try {
-        const buffer = fs.readFileSync(path);
-        const contentType = `image/${path.split(".").pop()}`;
-        serverCache.set(req.path, buffer, contentType, buffer.length);
-      } catch (error) {
-        console.error("Erro ao cachear arquivo:", error);
+    // Callback personalizado para cachear após envio bem-sucedido
+    const customCallback = (err) => {
+      if (!err && req.path.includes("profiles/")) {
+        try {
+          const buffer = fs.readFileSync(filePath);
+          const stats = fs.statSync(filePath);
+          const ext = path.extname(filePath).slice(1).toLowerCase();
+
+          // Determinar content-type correto
+          let contentType = "image/webp";
+          if (ext === "jpg" || ext === "jpeg") contentType = "image/jpeg";
+          else if (ext === "png") contentType = "image/png";
+          else if (ext === "gif") contentType = "image/gif";
+
+          // Armazena no cache em memória com timestamp do arquivo
+          const cacheData = {
+            buffer: buffer,
+            contentType: contentType,
+            fileSize: buffer.length,
+            timestamp: stats.mtime.getTime(),
+            imagePath: req.path,
+          };
+
+          serverCache.cache.set(serverCache.generateKey(req.path), cacheData);
+          console.log(
+            `💾 Arquivo cacheado após servir: ${fileName} (${buffer.length} bytes)`
+          );
+        } catch (cacheError) {
+          console.error("Erro ao cachear arquivo servido:", cacheError);
+        }
       }
-    }
-    return originalSendFile.call(this, path, options, callback);
+
+      if (callback) callback(err);
+    };
+
+    return originalSendFile.call(this, filePath, options, customCallback);
   };
 
   next();
@@ -120,9 +166,17 @@ app.use(
     etag: true,
     lastModified: true,
     immutable: false,
+    setHeaders: (res, filePath) => {
+      // Headers específicos para imagens de perfil
+      if (filePath.includes("profiles/")) {
+        res.set("Cache-Control", "public, max-age=3600, must-revalidate");
+        res.set("Vary", "Accept-Encoding");
+      }
+    },
   })
 );
 
+// RATE LIMITERS
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -143,55 +197,58 @@ const authLimiter = rateLimit({
 });
 app.use("/api/auth/", authLimiter);
 
-// 🔧 CORREÇÃO: Rate limit mais generoso para uploads de foto
 const uploadLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 20, // 20 uploads por 15 minutos (mais generoso)
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   message: {
     success: false,
     message: "Muitos uploads de foto. Tente novamente em 15 minutos.",
   },
 });
-
-// 🔧 CRÍTICO: Aplicar rate limit específico apenas para uploads de foto
 app.use("/api/profile/upload-photo", uploadLimiter);
 
-// Rate limit mais restritivo para atualizações completas do perfil
 const profileUpdateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 10, // 10 atualizações completas por 15 minutos
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   message: {
     success: false,
     message: "Muitas atualizações de perfil. Tente novamente em 15 minutos.",
   },
 });
 
-// Aplicar ao endpoint de atualização completa
 app.use("/api/profile", (req, res, next) => {
-  // Aplicar rate limit apenas para PUT (atualização completa)
   if (req.method === "PUT") {
     return profileUpdateLimiter(req, res, next);
   }
   next();
 });
 
-// ========== ROTAS ==========
+// ROTAS
 app.use("/api/auth", authRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/ranking", rankingRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/profile", profileRoutes);
-app.use("/api/cache", cacheRoutes);
 
-// 🆕 ROTA PARA ESTATÍSTICAS DO CACHE
-app.get("/api/cache/stats", (req, res) => {
+// ROTAS DE CACHE COM AUTENTICAÇÃO
+const authMiddleware = require("./middleware/authMiddleware");
+
+app.get("/api/cache/stats", authMiddleware, (req, res) => {
   try {
     const stats = serverCache.getStats();
     res.json({
       success: true,
       data: {
-        cache: stats,
+        cache: {
+          ...stats,
+          efficiency:
+            stats.hitRate > 50
+              ? "Boa"
+              : stats.hitRate > 20
+              ? "Regular"
+              : "Baixa",
+        },
         cached_images: serverCache.listCached(),
         timestamp: new Date().toISOString(),
       },
@@ -205,14 +262,19 @@ app.get("/api/cache/stats", (req, res) => {
   }
 });
 
-// 🆕 ROTA PARA LIMPAR CACHE (DEBUG)
-app.post("/api/cache/clear", (req, res) => {
+app.post("/api/cache/clear", authMiddleware, (req, res) => {
   try {
     const cleared = serverCache.clear();
+    console.log(`🧹 Cache limpo manualmente por usuário: ${req.user.id}`);
+
     res.json({
       success: true,
       message: `Cache limpo: ${cleared} itens removidos`,
-      timestamp: new Date().toISOString(),
+      data: {
+        itemsRemoved: cleared,
+        clearedBy: req.user.id,
+        timestamp: new Date().toISOString(),
+      },
     });
   } catch (error) {
     res.status(500).json({
@@ -238,14 +300,14 @@ app.get("/", (req, res) => {
       dashboard: true,
       profileUpload: true,
       separatePhotoUpload: true,
-      imageCache: true, // 🆕 Nova feature
-      serverCache: true, // 🆕 Nova feature
+      imageCache: true,
+      serverCache: true,
     },
     endpoints: [
       "GET  /",
       "GET  /api/health",
-      "GET  /api/cache/stats", // 🆕 Novo endpoint
-      "POST /api/cache/clear", // 🆕 Novo endpoint
+      "GET  /api/cache/stats",
+      "POST /api/cache/clear",
       // Auth endpoints
       "POST /api/auth/register",
       "POST /api/auth/login",
@@ -271,8 +333,8 @@ app.get("/", (req, res) => {
       "GET  /api/dashboard/interactions",
       // Profile endpoints
       "GET  /api/profile",
-      "PUT  /api/profile", // Atualização completa
-      "POST /api/profile/upload-photo", // Upload apenas de foto
+      "PUT  /api/profile",
+      "POST /api/profile/upload-photo",
       "DELETE /api/profile/photo",
     ],
   });
