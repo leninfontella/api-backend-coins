@@ -17,6 +17,7 @@ const donationRoutes = require("./routes/donations");
 const rankingRoutes = require("./routes/rankingRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const profileRoutes = require("./routes/profileRoutes");
+const badgesRoutes = require("./routes/badgesRoutes"); // NOVO
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
@@ -230,6 +231,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/ranking", rankingRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/badges", badgesRoutes); // NOVO
 
 // ROTAS DE CACHE COM AUTENTICAÇÃO
 const authMiddleware = require("./middleware/authMiddleware");
@@ -302,6 +304,7 @@ app.get("/", (req, res) => {
       separatePhotoUpload: true,
       imageCache: true,
       serverCache: true,
+      badgeSystem: true, // NOVO
     },
     endpoints: [
       "GET  /",
@@ -321,6 +324,12 @@ app.get("/", (req, res) => {
       "POST /api/users/update-balance",
       "GET  /api/users/stats",
       "GET  /api/users/search",
+      // Badges endpoints - NOVO
+      "GET  /api/badges",
+      "GET  /api/badges/levels",
+      "GET  /api/badges/progress",
+      "GET  /api/badges/ranking",
+      "PUT  /api/badges/refresh",
       // Ranking endpoints
       "GET  /api/ranking",
       "GET  /api/ranking/top10",
@@ -367,6 +376,7 @@ app.get("/api/health", (req, res) => {
       separatePhotoUpload: true,
       imageCache: true,
       serverCache: true,
+      badgeSystem: true, // NOVO
     },
   });
 });
