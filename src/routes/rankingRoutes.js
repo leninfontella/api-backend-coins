@@ -1,24 +1,228 @@
-// routes/rankingRoutes.js
+// routes/rankingRoutes.js - FUNÇÃO CORRIGIDA
 const express = require("express");
 const User = require("../models/User");
 const auth = require("../middleware/auth");
+const path = require("path");
+const fs = require("fs");
 
 const router = express.Router();
 
-// ========== ROTA PRINCIPAL DO RANKING ==========
+// ========== FUNÇÃO AUXILIAR CORRIGIDA PARA TRATAR FOTO DO PERFIL ==========
 /**
- * GET /api/ranking
- * Retorna o ranking completo de usuários ordenados por coins
+ * Processa dados do usuário para incluir profilePhotoUrl correto
+ * CORREÇÃO: Verifica se o arquivo realmente existe antes de retornar URL
  */
+function processUserProfilePhoto(
+  user,
+  baseUrl = process.env.BASE_URL || "http://localhost:5000"
+) {
+  // CORREÇÃO: Verificar se o usuário tem profilePhoto com filename válido
+  if (user.profilePhoto && user.profilePhoto.filename) {
+    // NOVO: Verificar se o arquivo realmente existe no sistema de arquivos
+    const uploadsDir = path.join(__dirname, "../uploads/profiles");
+    const filePath = path.join(uploadsDir, user.profilePhoto.filename);
+
+    try {
+      // Se o arquivo existe, retornar a URL
+      if (fs.existsSync(filePath)) {
+        console.log(`✅ Foto encontrada: ${user.profilePhoto.filename}`);
+        return `${baseUrl}/uploads/profiles/${user.profilePhoto.filename}`;
+      } else {
+        // Se não existe, log de aviso e limpar o campo no banco
+        console.log(
+          `⚠️ Arquivo não encontrado: ${user.profilePhoto.filename} - removendo referência`
+        );
+
+        // OPCIONAL: Limpar referência inválida do banco de dados de forma assíncrona
+        setImmediate(async () => {
+          try {
+            await User.findByIdAndUpdate(user._id, {
+              $unset: { profilePhoto: 1 },
+            });
+            console.log(
+              `🗑️ Referência de foto inválida removida do usuário ${user._id}`
+            );
+          } catch (error) {
+            console.error(
+              `❌ Erro ao limpar referência inválida: ${error.message}`
+            );
+          }
+        });
+
+        return null;
+      }
+    } catch (error) {
+      console.error(`❌ Erro ao verificar arquivo: ${error.message}`);
+      return null;
+    }
+  }
+
+  // Se tem profilePhotoUrl já definido (virtual), validar se é uma URL externa válida
+  if (user.profilePhotoUrl) {
+    // Se for URL externa (http/https), retornar como está
+    if (user.profilePhotoUrl.startsWith("http")) {
+      return user.profilePhotoUrl;
+    }
+
+    // Se for caminho local, verificar se existe
+    if (user.profilePhotoUrl.includes("/uploads/")) {
+      const filename = path.basename(user.profilePhotoUrl);
+      const uploadsDir = path.join(__dirname, "../uploads/profiles");
+      const filePath = path.join(uploadsDir, filename);
+
+      if (fs.existsSync(filePath)) {
+        return user.profilePhotoUrl;
+      } else {
+        console.log(`⚠️ Arquivo virtual não encontrado: ${filename}`);
+        return null;
+      }
+    }
+  }
+
+  // CORREÇÃO: Retorna null explicitamente para usuários sem foto
+  console.log(
+    `📝 Usuário ${
+      user.name || user._id
+    } sem foto de perfil - usando avatar com iniciais`
+  );
+  return null;
+}
+
+/**
+ * NOVA FUNÇÃO: Validar e limpar referências de fotos inválidas em lote
+ */
+async function cleanInvalidPhotoReferences() {
+  try {
+    console.log("🧹 Iniciando limpeza de referências de fotos inválidas...");
+
+    const usersWithPhotos = await User.find({
+      "profilePhoto.filename": { $exists: true },
+    }).select("_id profilePhoto name");
+
+    const uploadsDir = path.join(__dirname, "../uploads/profiles");
+    let cleanedCount = 0;
+
+    for (const user of usersWithPhotos) {
+      if (user.profilePhoto && user.profilePhoto.filename) {
+        const filePath = path.join(uploadsDir, user.profilePhoto.filename);
+
+        if (!fs.existsSync(filePath)) {
+          await User.findByIdAndUpdate(user._id, {
+            $unset: { profilePhoto: 1 },
+          });
+          cleanedCount++;
+          console.log(
+            `🗑️ Referência inválida removida: ${user.name} - ${user.profilePhoto.filename}`
+          );
+        }
+      }
+    }
+
+    console.log(
+      `✅ Limpeza concluída: ${cleanedCount} referências inválidas removidas`
+    );
+  } catch (error) {
+    console.error(`❌ Erro durante limpeza: ${error.message}`);
+  }
+}
+
+/**
+ * Formata dados do usuário para resposta da API - VERSÃO CORRIGIDA
+ */
+function formatUserForRanking(user, rank = null, baseUrl = null) {
+  const formattedUser = {
+    _id: user._id,
+    id: user._id,
+    name: user.name,
+    fullName: user.fullName || user.name,
+    displayName: user.fullName || user.name,
+    username: user.username,
+    avatar: user.avatar,
+    profilePhotoUrl: processUserProfilePhoto(user, baseUrl), // FUNÇÃO CORRIGIDA
+    coins: user.coins,
+    balance: user.coins, // Compatibilidade com frontend
+    level: user.level,
+    totalDonated: user.totalDonated || 0,
+    totalReceived: user.totalReceived || 0,
+    createdAt: user.createdAt,
+  };
+
+  if (rank !== null) {
+    formattedUser.rank = rank;
+  }
+
+  // Log para debug (apenas em desenvolvimento)
+  if (process.env.NODE_ENV === "development") {
+    const hasPhoto = formattedUser.profilePhotoUrl ? "📷" : "👤";
+    console.log(
+      `${hasPhoto} Usuário formatado: ${formattedUser.displayName} - Foto: ${
+        formattedUser.profilePhotoUrl || "sem foto"
+      }`
+    );
+  }
+
+  return formattedUser;
+}
+
+// ========== ROTA PARA LIMPEZA MANUAL (DESENVOLVIMENTO) ==========
+/**
+ * POST /api/ranking/clean-photos
+ * Limpa referências de fotos inválidas (apenas em desenvolvimento)
+ */
+router.post("/clean-photos", auth, async (req, res) => {
+  if (process.env.NODE_ENV !== "development") {
+    return res.status(403).json({
+      success: false,
+      message: "Operação disponível apenas em desenvolvimento",
+    });
+  }
+
+  try {
+    await cleanInvalidPhotoReferences();
+    res.json({
+      success: true,
+      message: "Limpeza de referências inválidas concluída",
+    });
+  } catch (error) {
+    console.error("Erro na limpeza:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro durante limpeza",
+    });
+  }
+});
+
+// ========== MIDDLEWARE PARA VERIFICAR UPLOADS DIRECTORY ==========
+/**
+ * Garante que o diretório de uploads existe
+ */
+function ensureUploadsDirectory() {
+  const uploadsDir = path.join(__dirname, "../uploads/profiles");
+
+  if (!fs.existsSync(uploadsDir)) {
+    try {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      console.log("📁 Diretório de uploads criado:", uploadsDir);
+    } catch (error) {
+      console.error("❌ Erro ao criar diretório de uploads:", error.message);
+    }
+  }
+}
+
+// Garantir diretório existe na inicialização
+ensureUploadsDirectory();
+
+// ========== ROTA PRINCIPAL DO RANKING - CORRIGIDA ==========
 router.get("/", auth, async (req, res) => {
   try {
     const { limit = 100, page = 1 } = req.query;
     const skip = (page - 1) * limit;
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
 
-    // Buscar usuários ativos ordenados por coins
+    // Buscar usuários ativos ordenados por coins - INCLUINDO profilePhoto
     const users = await User.find({ status: "active" })
       .select(
-        "name fullName username avatar coins level totalDonated totalReceived createdAt"
+        "name fullName username avatar coins level totalDonated totalReceived createdAt profilePhoto"
       )
       .sort({ coins: -1, totalDonated: -1, createdAt: 1 })
       .limit(parseInt(limit))
@@ -45,23 +249,21 @@ router.get("/", auth, async (req, res) => {
         ],
       })) + 1;
 
-    // CORREÇÃO: Adicionar posição no ranking para cada usuário com campos corretos
-    const usersWithRank = users.map((user, index) => ({
-      _id: user._id,
-      id: user._id,
-      name: user.name,
-      fullName: user.fullName || user.name, // CORREÇÃO: Garantir fullName
-      displayName: user.fullName || user.name, // CORREÇÃO: Adicionar displayName
-      username: user.username,
-      avatar: user.avatar,
-      coins: user.coins,
-      balance: user.coins, // Compatibilidade com frontend
-      level: user.level,
-      totalDonated: user.totalDonated || 0,
-      totalReceived: user.totalReceived || 0,
-      rank: skip + index + 1,
-      createdAt: user.createdAt,
-    }));
+    // CORREÇÃO: Aplicar formatação com validação de fotos
+    const usersWithRank = users.map((user, index) => {
+      return formatUserForRanking(user, skip + index + 1, baseUrl);
+    });
+
+    // Buscar dados completos do usuário atual incluindo foto
+    const currentUserWithPhoto = await User.findById(req.user._id).select(
+      "name fullName username avatar coins level totalDonated totalReceived createdAt profilePhoto"
+    );
+
+    const currentUserFormatted = formatUserForRanking(
+      currentUserWithPhoto,
+      currentUserRank,
+      baseUrl
+    );
 
     res.json({
       success: true,
@@ -71,21 +273,7 @@ router.get("/", auth, async (req, res) => {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalUsers / limit),
         currentUserRank,
-        currentUser: {
-          _id: req.user._id,
-          id: req.user._id,
-          name: req.user.name,
-          fullName: req.user.fullName || req.user.name, // CORREÇÃO: Garantir fullName
-          displayName: req.user.fullName || req.user.name,
-          coins: req.user.coins,
-          balance: req.user.coins,
-          level: req.user.level,
-          totalDonated: req.user.totalDonated || 0,
-          totalReceived: req.user.totalReceived || 0,
-          rank: currentUserRank,
-          avatar: req.user.avatar,
-          createdAt: req.user.createdAt,
-        },
+        currentUser: currentUserFormatted,
       },
     });
   } catch (error) {
@@ -98,32 +286,21 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-// ========== TOP 10 DO RANKING ==========
-/**
- * GET /api/ranking/top10
- * Retorna apenas os top 10 usuários
- */
+// ========== TOP 10 DO RANKING - CORRIGIDO ==========
 router.get("/top10", auth, async (req, res) => {
   try {
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+
     const topUsers = await User.find({ status: "active" })
-      .select("name fullName username avatar coins level totalDonated")
+      .select(
+        "name fullName username avatar coins level totalDonated profilePhoto"
+      )
       .sort({ coins: -1, totalDonated: -1, createdAt: 1 })
       .limit(10);
 
-    const usersWithRank = topUsers.map((user, index) => ({
-      _id: user._id,
-      id: user._id,
-      name: user.name,
-      fullName: user.fullName || user.name, // CORREÇÃO: Garantir fullName
-      displayName: user.fullName || user.name, // CORREÇÃO: Adicionar displayName
-      username: user.username,
-      avatar: user.avatar,
-      coins: user.coins,
-      balance: user.coins,
-      level: user.level,
-      totalDonated: user.totalDonated || 0,
-      rank: index + 1,
-    }));
+    const usersWithRank = topUsers.map((user, index) => {
+      return formatUserForRanking(user, index + 1, baseUrl);
+    });
 
     res.json({
       success: true,
@@ -138,13 +315,11 @@ router.get("/top10", auth, async (req, res) => {
   }
 });
 
-// ========== POSIÇÃO ESPECÍFICA DO USUÁRIO ==========
-/**
- * GET /api/ranking/my-position
- * Retorna a posição atual do usuário no ranking
- */
+// ========== POSIÇÃO ESPECÍFICA DO USUÁRIO - CORRIGIDA ==========
 router.get("/my-position", auth, async (req, res) => {
   try {
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+
     // Calcular posição no ranking
     const rank =
       (await User.countDocuments({
@@ -165,26 +340,20 @@ router.get("/my-position", auth, async (req, res) => {
 
     const totalUsers = await User.countDocuments({ status: "active" });
 
+    // Buscar dados completos do usuário incluindo foto
+    const userWithPhoto = await User.findById(req.user._id).select(
+      "name fullName username avatar coins level totalDonated totalReceived createdAt updatedAt email profilePhoto"
+    );
+
+    const userFormatted = formatUserForRanking(userWithPhoto, rank, baseUrl);
+    // Adicionar campos extras para my-position
+    userFormatted.email = userWithPhoto.email;
+    userFormatted.updatedAt = userWithPhoto.updatedAt;
+
     res.json({
       success: true,
       data: {
-        user: {
-          _id: req.user._id,
-          id: req.user._id,
-          name: req.user.name,
-          fullName: req.user.fullName || req.user.name, // CORREÇÃO: Garantir fullName
-          displayName: req.user.fullName || req.user.name,
-          email: req.user.email,
-          coins: req.user.coins,
-          balance: req.user.coins,
-          level: req.user.level,
-          totalDonated: req.user.totalDonated || 0,
-          totalReceived: req.user.totalReceived || 0,
-          avatar: req.user.avatar,
-          rank,
-          createdAt: req.user.createdAt,
-          updatedAt: req.user.updatedAt,
-        },
+        user: userFormatted,
         totalUsers,
         percentile: (((totalUsers - rank + 1) / totalUsers) * 100).toFixed(1),
       },
@@ -198,14 +367,12 @@ router.get("/my-position", auth, async (req, res) => {
   }
 });
 
-// ========== RANKING POR PROXIMIDADE ==========
-/**
- * GET /api/ranking/around-me
- * Retorna usuários próximos da posição atual do usuário
- */
+// As demais rotas permanecem iguais...
+// ========== RANKING POR PROXIMIDADE - CORRIGIDO ==========
 router.get("/around-me", auth, async (req, res) => {
   try {
-    const { range = 5 } = req.query; // Quantos usuários mostrar acima e abaixo
+    const { range = 5 } = req.query;
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
 
     // Calcular posição atual
     const currentRank =
@@ -224,26 +391,23 @@ router.get("/around-me", auth, async (req, res) => {
     const limit = parseInt(range) * 2 + 1;
 
     const users = await User.find({ status: "active" })
-      .select("name fullName username avatar coins level totalDonated")
+      .select(
+        "name fullName username avatar coins level totalDonated profilePhoto"
+      )
       .sort({ coins: -1, totalDonated: -1, createdAt: 1 })
       .skip(skip)
       .limit(limit);
 
-    const usersWithRank = users.map((user, index) => ({
-      _id: user._id,
-      id: user._id,
-      name: user.name,
-      fullName: user.fullName || user.name, // CORREÇÃO: Garantir fullName
-      displayName: user.fullName || user.name, // CORREÇÃO: Adicionar displayName
-      username: user.username,
-      avatar: user.avatar,
-      coins: user.coins,
-      balance: user.coins,
-      level: user.level,
-      totalDonated: user.totalDonated || 0,
-      rank: skip + index + 1,
-      isCurrentUser: user._id.toString() === req.user._id.toString(),
-    }));
+    const usersWithRank = users.map((user, index) => {
+      const formattedUser = formatUserForRanking(
+        user,
+        skip + index + 1,
+        baseUrl
+      );
+      formattedUser.isCurrentUser =
+        user._id.toString() === req.user._id.toString();
+      return formattedUser;
+    });
 
     res.json({
       success: true,
@@ -262,10 +426,6 @@ router.get("/around-me", auth, async (req, res) => {
 });
 
 // ========== ESTATÍSTICAS DO RANKING ==========
-/**
- * GET /api/ranking/stats
- * Retorna estatísticas gerais do ranking
- */
 router.get("/stats", auth, async (req, res) => {
   try {
     const stats = await User.aggregate([
