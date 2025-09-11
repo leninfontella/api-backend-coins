@@ -44,6 +44,11 @@ app.use(
   })
 );
 
+// Middleware para servir arquivos estáticos (IMAGENS)
+const uploadsPath = path.join(__dirname, "uploads");
+
+app.use("/uploads", express.static(uploadsPath));
+
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
