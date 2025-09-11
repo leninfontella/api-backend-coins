@@ -25,7 +25,7 @@ function processUserProfilePhoto(
     try {
       // Se o arquivo existe, retornar a URL
       if (fs.existsSync(filePath)) {
-        console.log(`✅ Foto encontrada: ${user.profilePhoto.filename}`);
+        // console.log(`✅ Foto encontrada: ${user.profilePhoto.filename}`);
         return `${baseUrl}/uploads/profiles/${user.profilePhoto.filename}`;
       } else {
         // Se não existe, log de aviso e limpar o campo no banco
@@ -80,11 +80,11 @@ function processUserProfilePhoto(
   }
 
   // CORREÇÃO: Retorna null explicitamente para usuários sem foto
-  console.log(
-    `📝 Usuário ${
-      user.name || user._id
-    } sem foto de perfil - usando avatar com iniciais`
-  );
+  // console.log(
+  //   `📝 Usuário ${
+  //     user.name || user._id
+  //   } sem foto de perfil - usando avatar com iniciais`
+  // );
   return null;
 }
 
@@ -154,11 +154,11 @@ function formatUserForRanking(user, rank = null, baseUrl = null) {
   // Log para debug (apenas em desenvolvimento)
   if (process.env.NODE_ENV === "development") {
     const hasPhoto = formattedUser.profilePhotoUrl ? "📷" : "👤";
-    console.log(
-      `${hasPhoto} Usuário formatado: ${formattedUser.displayName} - Foto: ${
-        formattedUser.profilePhotoUrl || "sem foto"
-      }`
-    );
+    // console.log(
+    //   `${hasPhoto} Usuário formatado: ${formattedUser.displayName} - Foto: ${
+    //     formattedUser.profilePhotoUrl || "sem foto"
+    //   }`
+    // );
   }
 
   return formattedUser;
