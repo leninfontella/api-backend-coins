@@ -2,7 +2,6 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
-const rateLimit = require("express-rate-limit");
 const cookieParser = require("cookie-parser");
 const path = require("path");
 const fs = require("fs");
@@ -183,53 +182,6 @@ app.use(
   })
 );
 
-// RATE LIMITERS
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: {
-    success: false,
-    message: "Muitas requisições. Tente novamente em 15 minutos.",
-  },
-});
-app.use(limiter);
-
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: {
-    success: false,
-    message: "Muitas tentativas de login. Tente novamente em 15 minutos.",
-  },
-});
-app.use("/api/auth/", authLimiter);
-
-const uploadLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: {
-    success: false,
-    message: "Muitos uploads de foto. Tente novamente em 15 minutos.",
-  },
-});
-app.use("/api/profile/upload-photo", uploadLimiter);
-
-const profileUpdateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: {
-    success: false,
-    message: "Muitas atualizações de perfil. Tente novamente em 15 minutos.",
-  },
-});
-
-app.use("/api/profile", (req, res, next) => {
-  if (req.method === "PUT") {
-    return profileUpdateLimiter(req, res, next);
-  }
-  next();
-});
-
 // ROTAS
 app.use("/api/auth", authRoutes);
 app.use("/api/donations", donationRoutes);
@@ -302,7 +254,7 @@ app.get("/", (req, res) => {
     features: {
       authentication: true,
       userCoins: true,
-      rateLimiting: true,
+      rateLimiting: false, // REMOVIDO
       security: true,
       ranking: true,
       dashboard: true,
@@ -374,7 +326,7 @@ app.get("/api/health", (req, res) => {
     features: {
       authentication: true,
       userCoins: true,
-      rateLimiting: true,
+      rateLimiting: false, // REMOVIDO
       security: true,
       ranking: true,
       dashboard: true,

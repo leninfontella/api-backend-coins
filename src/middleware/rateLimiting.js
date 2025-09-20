@@ -109,10 +109,99 @@ const searchRateLimit = rateLimit({
   },
 });
 
+// Rate limiter geral da aplicação - bem permissivo
+const generalRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 1000, // máximo 1000 requests por 15 minutos
+  message: {
+    success: false,
+    message: "Muitas requisições. Tente novamente em 15 minutos.",
+    code: "GENERAL_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message:
+        "Limite de requisições excedido. Tente novamente em alguns minutos.",
+      code: "GENERAL_RATE_LIMIT",
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+    });
+  },
+});
+
+// Rate limiter para autenticação - restritivo
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20, // máximo 20 tentativas de login por 15 minutos
+  message: {
+    success: false,
+    message: "Muitas tentativas de login. Tente novamente em 15 minutos.",
+    code: "AUTH_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Muitas tentativas de login. Aguarde alguns minutos.",
+      code: "AUTH_RATE_LIMIT",
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+    });
+  },
+});
+
+// Rate limiter para upload de fotos - restritivo
+const uploadRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // máximo 10 uploads por 15 minutos
+  message: {
+    success: false,
+    message: "Muitos uploads de foto. Tente novamente em 15 minutos.",
+    code: "UPLOAD_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Muitos uploads de foto realizados. Aguarde alguns minutos.",
+      code: "UPLOAD_RATE_LIMIT",
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+    });
+  },
+});
+
+// Rate limiter para atualização de perfil - moderado
+const profileUpdateRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 10, // máximo 10 atualizações de perfil por 15 minutos
+  message: {
+    success: false,
+    message: "Muitas atualizações de perfil. Tente novamente em 15 minutos.",
+    code: "PROFILE_UPDATE_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Muitas atualizações de perfil. Aguarde alguns minutos.",
+      code: "PROFILE_UPDATE_RATE_LIMIT",
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+    });
+  },
+});
+
 module.exports = {
   dashboardRateLimit,
   goalUpdateRateLimit,
   interactionsRateLimit,
   donationRateLimit,
   searchRateLimit,
+  generalRateLimit,
+  authRateLimit,
+  uploadRateLimit,
+  profileUpdateRateLimit,
 };
