@@ -174,10 +174,10 @@ app.use(
     lastModified: true,
     immutable: false,
     setHeaders: (res, filePath) => {
-      // Headers específicos para imagens de perfil
       if (filePath.includes("profiles/")) {
-        res.set("Cache-Control", "public, max-age=3600, must-revalidate");
-        res.set("Vary", "Accept-Encoding");
+        res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+        res.set("Pragma", "no-cache");
+        res.set("Expires", "0");
       }
     },
   })
