@@ -7,43 +7,6 @@ class DonationController {
   /**
    * Criar nova doação
    */
-
-  /**
-   * Obter doações recebidas desde um timestamp
-   */
-  async getReceivedDonations(req, res) {
-    try {
-      const userId = req.user.id;
-      const { since } = req.query;
-
-      const filter = { recipient: userId };
-      if (since) {
-        filter.createdAt = { $gt: new Date(parseInt(since)) };
-      }
-
-      const donations = await Donation.find(filter)
-        .populate("donor", "name username avatar")
-        .sort({ createdAt: -1 })
-        .limit(50);
-
-      res.json({
-        success: true,
-        data: donations.map((d) => ({
-          donorName: d.donor?.name || "Anônimo",
-          amount: d.amount,
-          message: d.message,
-          timestamp: d.createdAt,
-        })),
-      });
-    } catch (error) {
-      console.error("Erro ao obter doações recebidas:", error);
-      res.status(500).json({
-        success: false,
-        message: "Erro ao obter doações recebidas",
-      });
-    }
-  }
-
   async createDonation(req, res) {
     try {
       const donorId = req.user.id;
