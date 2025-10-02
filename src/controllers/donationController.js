@@ -35,7 +35,7 @@ class DonationController {
         });
       }
 
-      // 3. Verificar se o doador tem saldo suficiente usando o método do modelo User
+      // 3. Verificar se o doador tem saldo suficiente
       if (!donorUser.hasEnoughCoins(parsedAmount)) {
         return res.status(400).json({
           success: false,
@@ -43,7 +43,7 @@ class DonationController {
         });
       }
 
-      // 4. Criar a doação no banco de dados (o status é 'completed' pois a lógica de transação é tratada aqui)
+      // 4. Criar a doação no banco de dados
       const newDonation = new Donation({
         donor: donorUser._id,
         recipient: recipientUser._id,
@@ -63,15 +63,31 @@ class DonationController {
       });
       await newDonation.save();
 
-      // 5. USAR OS MÉTODOS 'updateCoins' PARA ATUALIZAR OS USUÁRIOS
-      // Isso garante que a lógica de negócio do modelo 'User' seja executada,
-      // incluindo a atualização dos campos 'totalDonated' e 'totalReceived'
+      // 5. Atualizar saldos dos usuários
       await Promise.all([
         donorUser.updateCoins(-parsedAmount, "donation"),
         recipientUser.updateCoins(parsedAmount, "received"),
       ]);
 
-      // 6. Retornar uma resposta de sucesso
+      // 6. 🔔 ENVIAR NOTIFICAÇÃO WEBSOCKET PARA O RECEPTOR
+      const wsServer = req.app.get("wsServer");
+      if (wsServer) {
+        wsServer.notifyDonationReceived(recipientUser._id.toString(), {
+          donationId: newDonation._id,
+          amount: parsedAmount,
+          message: message || "",
+          donor: {
+            id: donorUser._id,
+            name: donorUser.name,
+            username: donorUser.username,
+            avatar: donorUser.avatar,
+          },
+          newBalance: recipientUser.coins,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // 7. Retornar resposta de sucesso
       res.status(201).json({
         success: true,
         message: `Doação de ${parsedAmount} moedas realizada com sucesso!`,
@@ -165,7 +181,6 @@ class DonationController {
         });
       }
 
-      // 🔍 CORREÇÃO: Usar o donationService se existir
       const result = await donationService.searchUsers(
         query.trim(),
         currentUserId,
