@@ -7,6 +7,7 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
     },
     title: {
       type: String,
@@ -46,7 +47,38 @@ const notificationSchema = new mongoose.Schema(
     data: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
+      // Estrutura para donation_received/donation_sent
+      donationId: mongoose.Schema.Types.ObjectId,
+      amount: Number,
+      donor: {
+        id: mongoose.Schema.Types.ObjectId,
+        name: String,
+        username: String,
+        avatar: String,
+      },
+      newBalance: Number,
+      timestamp: Date,
+      // Estrutura para level_up
+      newLevel: Number,
+      oldLevel: Number,
+      // Estrutura para achievement
+      achievement: mongoose.Schema.Types.Mixed,
     },
+    // Campos de leitura e exibição (compatibilidade com sistema antigo)
+    read: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    displayed: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    displayedAt: Date,
+    readAt: Date,
+    archivedAt: Date,
+    expiresAt: Date, // Para notificações temporárias
     // Metadados
     metadata: {
       channel: {
@@ -57,40 +89,56 @@ const notificationSchema = new mongoose.Schema(
       source: String,
       category: String,
     },
-    readAt: Date,
-    archivedAt: Date,
-    expiresAt: Date, // Para notificações temporárias
   },
   {
     timestamps: true,
   }
 );
 
-// Índices
+// Índices otimizados (combinação de ambos os sistemas)
 notificationSchema.index({ user: 1, status: 1, createdAt: -1 });
 notificationSchema.index({ user: 1, type: 1 });
+notificationSchema.index({ user: 1, displayed: 1, createdAt: -1 });
+notificationSchema.index({ user: 1, read: 1 });
 notificationSchema.index({ createdAt: -1 });
 notificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // TTL index
 
-// Middleware para limpar notificações antigas
+// Middleware para sincronizar campos read/status e limpar notificações antigas
 notificationSchema.pre("save", function (next) {
+  // Sincronizar read com status
+  if (this.isModified("status")) {
+    this.read = this.status === "read" || this.status === "archived";
+  }
+  if (this.isModified("read") && !this.isModified("status")) {
+    this.status = this.read ? "read" : "unread";
+  }
+
   // Se não tem expiresAt definido, define para 30 dias
   if (this.isNew && !this.expiresAt) {
     this.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 dias
   }
+
   next();
 });
 
 // Métodos de instância
 notificationSchema.methods.markAsRead = function () {
   this.status = "read";
+  this.read = true;
   this.readAt = new Date();
   return this.save();
 };
 
 notificationSchema.methods.archive = function () {
   this.status = "archived";
+  this.read = true;
   this.archivedAt = new Date();
+  return this.save();
+};
+
+notificationSchema.methods.markAsDisplayed = function () {
+  this.displayed = true;
+  this.displayedAt = new Date();
   return this.save();
 };
 
@@ -127,6 +175,13 @@ notificationSchema.statics.getUnreadCount = function (userId) {
   });
 };
 
+notificationSchema.statics.getUndisplayedNotifications = function (userId) {
+  return this.find({
+    user: userId,
+    displayed: false,
+  }).sort({ createdAt: -1 });
+};
+
 notificationSchema.statics.markAllAsRead = function (userId, types = null) {
   let query = {
     user: userId,
@@ -140,9 +195,25 @@ notificationSchema.statics.markAllAsRead = function (userId, types = null) {
   return this.updateMany(query, {
     $set: {
       status: "read",
+      read: true,
       readAt: new Date(),
     },
   });
+};
+
+notificationSchema.statics.markAllAsDisplayed = function (userId) {
+  return this.updateMany(
+    {
+      user: userId,
+      displayed: false,
+    },
+    {
+      $set: {
+        displayed: true,
+        displayedAt: new Date(),
+      },
+    }
+  );
 };
 
 notificationSchema.statics.createNotification = async function (
@@ -153,7 +224,7 @@ notificationSchema.statics.createNotification = async function (
     const User = mongoose.model("User");
     const user = await User.findById(notificationData.user);
 
-    if (!user || !user.settings.pushNotifications) {
+    if (!user || !user.settings?.pushNotifications) {
       return null;
     }
 
@@ -178,6 +249,51 @@ notificationSchema.statics.createBulkNotifications = async function (
   }
 };
 
+// Helper para criar notificação de doação recebida
+notificationSchema.statics.createDonationReceivedNotification = function (
+  userId,
+  donationData
+) {
+  return this.createNotification({
+    user: userId,
+    title: "💰 Doação Recebida!",
+    message: `Você recebeu R$ ${donationData.amount.toFixed(2)} de ${
+      donationData.donor.name
+    }`,
+    type: "donation_received",
+    priority: "high",
+    data: {
+      donationId: donationData.donationId,
+      amount: donationData.amount,
+      message: donationData.message,
+      donor: donationData.donor,
+      newBalance: donationData.newBalance,
+      timestamp: new Date(),
+    },
+  });
+};
+
+// Helper para criar notificação de doação enviada
+notificationSchema.statics.createDonationSentNotification = function (
+  userId,
+  donationData
+) {
+  return this.createNotification({
+    user: userId,
+    title: "✨ Doação Enviada!",
+    message: `Você doou R$ ${donationData.amount.toFixed(2)}`,
+    type: "donation_sent",
+    priority: "normal",
+    data: {
+      donationId: donationData.donationId,
+      amount: donationData.amount,
+      message: donationData.message,
+      newBalance: donationData.newBalance,
+      timestamp: new Date(),
+    },
+  });
+};
+
 // Helper para criar notificação de level up
 notificationSchema.statics.createLevelUpNotification = function (
   userId,
@@ -187,7 +303,7 @@ notificationSchema.statics.createLevelUpNotification = function (
   return this.createNotification({
     user: userId,
     title: "🎉 Level Up!",
-    message: `Parabéns! Você subiu de ${oldLevel} para ${newLevel}!`,
+    message: `Parabéns! Você subiu do nível ${oldLevel} para ${newLevel}!`,
     type: "level_up",
     priority: "high",
     data: {
@@ -215,5 +331,18 @@ notificationSchema.statics.createAchievementNotification = function (
     },
   });
 };
+
+// Virtual para compatibilidade com código legado
+notificationSchema.virtual("isRead").get(function () {
+  return this.read || this.status === "read";
+});
+
+notificationSchema.virtual("isDisplayed").get(function () {
+  return this.displayed;
+});
+
+// Configurar virtuals no JSON
+notificationSchema.set("toJSON", { virtuals: true });
+notificationSchema.set("toObject", { virtuals: true });
 
 module.exports = mongoose.model("Notification", notificationSchema);

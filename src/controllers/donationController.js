@@ -2,10 +2,11 @@
 const donationService = require("../services/donationService");
 const User = require("../models/User");
 const Donation = require("../models/Donation");
+const Notification = require("../models/Notification");
 
 class DonationController {
   /**
-   * Criar nova doação
+   * Criar nova doação com sistema completo de notificações
    */
   async createDonation(req, res) {
     try {
@@ -69,22 +70,48 @@ class DonationController {
         recipientUser.updateCoins(parsedAmount, "received"),
       ]);
 
-      // 6. 🔔 ENVIAR NOTIFICAÇÃO WEBSOCKET PARA O RECEPTOR
+      // 6. 🔔 SISTEMA COMPLETO DE NOTIFICAÇÕES
+      const donationData = {
+        donationId: newDonation._id,
+        amount: parsedAmount,
+        message: message || "",
+        donor: {
+          id: donorUser._id,
+          name: donorUser.name,
+          username: donorUser.username,
+          avatar: donorUser.avatar,
+        },
+        newBalance: recipientUser.coins,
+        timestamp: new Date().toISOString(),
+      };
+
+      // 6.1. Criar notificação para o RECEPTOR (SEMPRE salva no banco)
+      const recipientNotification =
+        await Notification.createDonationReceivedNotification(
+          recipientUser._id,
+          donationData
+        );
+
+      // 6.2. Criar notificação para o DOADOR (confirmação de envio)
+      await Notification.createDonationSentNotification(donorUser._id, {
+        donationId: newDonation._id,
+        amount: parsedAmount,
+        message: message || "",
+        newBalance: donorUser.coins,
+      });
+
+      // 6.3. Tentar enviar via WebSocket (se receptor estiver online)
       const wsServer = req.app.get("wsServer");
-      if (wsServer) {
-        wsServer.notifyDonationReceived(recipientUser._id.toString(), {
-          donationId: newDonation._id,
-          amount: parsedAmount,
-          message: message || "",
-          donor: {
-            id: donorUser._id,
-            name: donorUser.name,
-            username: donorUser.username,
-            avatar: donorUser.avatar,
-          },
-          newBalance: recipientUser.coins,
-          timestamp: new Date().toISOString(),
-        });
+      if (wsServer && recipientNotification) {
+        const wasSent = wsServer.notifyDonationReceived(
+          recipientUser._id.toString(),
+          donationData
+        );
+
+        // Se WebSocket enviou com sucesso, marcar como exibida
+        if (wasSent) {
+          await recipientNotification.markAsDisplayed();
+        }
       }
 
       // 7. Retornar resposta de sucesso

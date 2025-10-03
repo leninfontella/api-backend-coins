@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Token = require("../models/Token");
+const Notification = require("../models/Notification");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
 
@@ -10,7 +11,6 @@ const createAccessToken = (userId) => {
 };
 
 const createRefreshToken = (userId) => {
-  // refresh token também assinado, mas guardado no DB
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
   });
@@ -27,22 +27,20 @@ exports.register = async (req, res, next) => {
     if (exists) return res.status(409).json({ message: "Email já cadastrado" });
 
     const user = new User({ name, email, password });
-    // coins: 100 é automático pelo default no schema
     await user.save();
 
     const accessToken = createAccessToken(user._id);
     const refreshToken = createRefreshToken(user._id);
 
-    // salvar refresh token no DB
+    // Salvar refresh token no DB
     const expiresAt = new Date(
       Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
     );
     await Token.create({ user: user._id, token: refreshToken, expiresAt });
 
-    // enviar cookie httpOnly com refresh token
+    // Enviar cookie httpOnly com refresh token
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
-    // ========== MODIFICADO: Incluir dados de moedas na resposta ==========
     res.status(201).json({
       success: true,
       message: "Usuário criado com sucesso!",
@@ -57,6 +55,9 @@ exports.register = async (req, res, next) => {
           totalReceived: user.totalReceived,
         },
         accessToken,
+        // Novo usuário não tem notificações pendentes
+        hasPendingNotifications: false,
+        pendingNotificationsCount: 0,
       },
     });
   } catch (err) {
@@ -84,7 +85,7 @@ exports.login = async (req, res, next) => {
     const accessToken = createAccessToken(user._id);
     const refreshToken = createRefreshToken(user._id);
 
-    // salvar refresh token
+    // Salvar refresh token
     const expiresAt = new Date(
       Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
     );
@@ -92,13 +93,40 @@ exports.login = async (req, res, next) => {
 
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
-    // ✅ Usar toJSON para incluir virtuals (como profilePhotoUrl)
+    // 🔔 BUSCAR NOTIFICAÇÕES PENDENTES (não exibidas)
+    const pendingNotifications = await Notification.find({
+      user: user._id,
+      displayed: false,
+      status: "unread",
+    })
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    const hasPendingNotifications = pendingNotifications.length > 0;
+
+    // Opcional: Obter contagem total de não lidas
+    const unreadCount = await Notification.getUnreadCount(user._id);
+
     res.json({
       success: true,
       message: "Login realizado com sucesso!",
       data: {
-        user: user.toJSON(), // <-- inclui profilePhotoUrl automaticamente
+        user: user.toJSON(),
         accessToken,
+        // 📬 Informações de notificações pendentes
+        hasPendingNotifications,
+        pendingNotificationsCount: pendingNotifications.length,
+        unreadNotificationsCount: unreadCount,
+        // Opcionalmente, enviar as notificações mais recentes
+        recentNotifications: pendingNotifications.slice(0, 5).map((n) => ({
+          id: n._id,
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          priority: n.priority,
+          createdAt: n.createdAt,
+          data: n.data,
+        })),
       },
     });
   } catch (err) {
@@ -111,7 +139,7 @@ exports.refreshToken = async (req, res, next) => {
     const token = req.cookies.refreshToken;
     if (!token) return res.status(401).json({ message: "Sem refresh token" });
 
-    // verificar token assinado
+    // Verificar token assinado
     let payload;
     try {
       payload = jwt.verify(token, process.env.JWT_SECRET);
@@ -119,16 +147,16 @@ exports.refreshToken = async (req, res, next) => {
       return res.status(401).json({ message: "Refresh token inválido" });
     }
 
-    // checar se token existe no DB
+    // Checar se token existe no DB
     const stored = await Token.findOne({ user: payload.id, token });
     if (!stored)
       return res.status(401).json({ message: "Refresh token não reconhecido" });
 
-    // gerar novos tokens
+    // Gerar novos tokens
     const accessToken = createAccessToken(payload.id);
     const newRefreshToken = createRefreshToken(payload.id);
 
-    // substituir token no DB (rotacionar)
+    // Substituir token no DB (rotacionar)
     stored.token = newRefreshToken;
     stored.expiresAt = new Date(
       Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
@@ -137,7 +165,18 @@ exports.refreshToken = async (req, res, next) => {
 
     res.cookie("refreshToken", newRefreshToken, cookieOptions(req));
 
-    res.json({ success: true, data: { accessToken } });
+    // 🔔 Incluir informações de notificações no refresh
+    const unreadCount = await Notification.getUnreadCount(payload.id);
+    const hasPending = unreadCount > 0;
+
+    res.json({
+      success: true,
+      data: {
+        accessToken,
+        hasPendingNotifications: hasPending,
+        unreadNotificationsCount: unreadCount,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -147,11 +186,9 @@ exports.logout = async (req, res, next) => {
   try {
     const token = req.cookies.refreshToken;
     if (token) {
-      // deletar do DB
       await Token.deleteOne({ token });
     }
 
-    // limpar cookie do cliente
     res.clearCookie("refreshToken", {
       httpOnly: true,
       sameSite: "strict",
@@ -163,7 +200,6 @@ exports.logout = async (req, res, next) => {
   }
 };
 
-// ========== MODIFICADO: Incluir dados de moedas na resposta do me ==========
 exports.me = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -173,10 +209,34 @@ exports.me = async (req, res, next) => {
         .json({ success: false, message: "Usuário não encontrado" });
     }
 
+    // 🔔 Incluir informações de notificações no endpoint /me
+    const unreadCount = await Notification.getUnreadCount(user._id);
+    const pendingNotifications = await Notification.find({
+      user: user._id,
+      displayed: false,
+      status: "unread",
+    })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
     res.json({
       success: true,
       data: {
-        user: user.toJSON(), // ✅ inclui virtuals como profilePhotoUrl
+        user: user.toJSON(),
+        // 📬 Informações de notificações
+        notifications: {
+          unreadCount,
+          hasPending: pendingNotifications.length > 0,
+          pendingCount: pendingNotifications.length,
+          recent: pendingNotifications.map((n) => ({
+            id: n._id,
+            type: n.type,
+            title: n.title,
+            message: n.message,
+            priority: n.priority,
+            createdAt: n.createdAt,
+          })),
+        },
       },
     });
   } catch (err) {
@@ -192,13 +252,11 @@ function cookieOptions(req) {
     httpOnly: true,
     secure,
     sameSite: "strict",
-    // em dev, definir maxAge baseado na variável (em ms)
     maxAge: msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d"),
   };
 }
 
 function cookieSecure() {
-  // permitir override em .env (COOKIE_SECURE=true) para produção
   return (
     process.env.COOKIE_SECURE === "true" ||
     process.env.NODE_ENV === "production"
@@ -206,18 +264,14 @@ function cookieSecure() {
 }
 
 function msToMillis(str) {
-  // converte '7d' | '15m' | '1h' para milissegundos simples
-  // suporte básico: d = dias, h = horas, m = minutos
   try {
     const num = parseInt(str.slice(0, -1), 10);
     const unit = str.slice(-1);
     if (unit === "d") return num * 24 * 60 * 60 * 1000;
     if (unit === "h") return num * 60 * 60 * 1000;
     if (unit === "m") return num * 60 * 1000;
-    // default: treat as ms
     return parseInt(str, 10);
   } catch (e) {
-    // fallback 7 dias
     return 7 * 24 * 60 * 60 * 1000;
   }
 }
