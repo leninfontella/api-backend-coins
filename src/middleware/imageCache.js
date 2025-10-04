@@ -97,7 +97,7 @@ const addCacheHeaders = (req, res, next) => {
         const etag = `"${stats.mtime.getTime()}-${stats.size}"`;
 
         this.set({
-          "Cache-Control": "no-store, must-revalidate",
+          "Cache-Control": "public, max-age=3600, must-revalidate",
           ETag: etag,
           "Last-Modified": stats.mtime.toUTCString(),
           Expires: new Date(Date.now() + 3600000).toUTCString(),

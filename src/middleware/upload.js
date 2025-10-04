@@ -127,17 +127,6 @@ const processProfileImage = async (req, res, next) => {
     serverCache.set(newImagePath, imageBuffer, "image/webp", stats.size);
     console.log(`💾 Nova imagem pré-carregada no cache: ${filename}`);
 
-    // Invalida qualquer versão antiga dessa imagem no cache em memória
-    serverCache.invalidate(newImagePath);
-
-    // Forçar invalidação no cache HTTP (ETag/Last-Modified)
-    const { invalidateCache } = require("../utils/imageCache");
-    invalidateCache(newImagePath);
-
-    console.log(
-      `♻️ Cache antigo invalidado e nova imagem registrada: ${filename}`
-    );
-
     // Adicionar informações da imagem ao req
     req.processedImage = {
       filename: filename,
