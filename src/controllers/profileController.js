@@ -2,6 +2,20 @@ const User = require("../models/User");
 const path = require("path");
 const fs = require("fs");
 
+// FUNÇÃO AUXILIAR: Gerar URL completa com timestamp para mobile
+const getPhotoUrlWithCacheBusting = (photoPath, req) => {
+  if (!photoPath) return null;
+
+  const baseURL = process.env.API_URL || `${req.protocol}://${req.get("host")}`;
+  const fullUrl = `${baseURL}${photoPath}`;
+
+  // Cache busting agressivo para mobile
+  const timestamp = Date.now();
+  const cacheBuster = Math.random().toString(36).substring(7);
+
+  return `${fullUrl}?t=${timestamp}&v=${cacheBuster}&mobile=1`;
+};
+
 const profileController = {
   // Atualizar perfil completo (com validação de proprietário)
   async updateProfile(req, res) {
@@ -9,7 +23,6 @@ const profileController = {
       const userId = req.user.id;
       const { name, email, phone } = req.body;
 
-      // Buscar usuário atual
       const user = await User.findById(userId);
       if (!user) {
         return res.status(404).json({
@@ -18,9 +31,8 @@ const profileController = {
         });
       }
 
-      // 🔧 VALIDAÇÃO CRÍTICA: Verificar se o email pertence ao usuário atual
+      // Validação de email
       if (email && email.toLowerCase() !== user.email.toLowerCase()) {
-        // Verificar se o novo email já existe em outro usuário
         const existingUser = await User.findOne({
           email: email.toLowerCase(),
           _id: { $ne: userId },
@@ -34,7 +46,7 @@ const profileController = {
         }
       }
 
-      // Se há uma nova foto, remover a anterior
+      // Se há nova foto, remover a anterior
       if (req.processedImage) {
         user.removeOldProfilePhoto();
 
@@ -45,22 +57,29 @@ const profileController = {
         };
       }
 
-      // Atualizar apenas dados básicos validados
+      // Atualizar dados básicos
       if (name && name.trim()) user.name = name.trim();
       if (email && email.trim()) user.email = email.trim().toLowerCase();
       if (phone !== undefined) user.phone = phone.trim();
 
       await user.save();
 
-      // Preparar dados atualizados do usuário para resposta
+      // CRÍTICO: Preparar resposta com cache busting
+      const timestamp = Date.now();
+      const cacheBuster = Math.random().toString(36).substring(7);
+
       const updatedUser = {
         id: user._id,
         name: user.name,
         fullName: user.fullName,
         email: user.email,
         phone: user.phone,
-        profilePhotoUrl: user.profilePhotoUrl,
-        avatar: user.avatar,
+        profilePhotoUrl: user.profilePhotoUrl
+          ? getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req)
+          : null,
+        avatar: user.profilePhotoUrl
+          ? getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req)
+          : null,
         institution: user.institution,
         coins: user.coins,
         level: user.level,
@@ -73,6 +92,9 @@ const profileController = {
         stats: user.stats,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
+        // CRÍTICO: Adicionar timestamp e cacheBuster
+        photoTimestamp: timestamp,
+        cacheBuster: cacheBuster,
       };
 
       res.json({
@@ -81,15 +103,16 @@ const profileController = {
         user: updatedUser,
         profilePhoto: req.processedImage
           ? {
-              url: user.profilePhotoUrl,
+              url: getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req),
               filename: user.profilePhoto.filename,
+              timestamp: timestamp,
+              cacheBuster: cacheBuster,
             }
           : undefined,
       });
     } catch (error) {
       console.error("Erro ao atualizar o perfil:", error);
 
-      // Se houve erro e uma imagem foi processada, remover o arquivo
       if (req.processedImage) {
         const filepath = path.join(
           __dirname,
@@ -101,7 +124,6 @@ const profileController = {
         });
       }
 
-      // Tratamento específico para erro de email duplicado
       if (error.code === 11000) {
         return res.status(400).json({
           success: false,
@@ -118,14 +140,13 @@ const profileController = {
     }
   },
 
-  // 🔧 NOVO MÉTODO: Upload apenas da foto (sem outros dados)
+  // Upload apenas da foto
   async uploadProfilePhoto(req, res) {
     try {
       const userId = req.user.id;
       const user = await User.findById(userId);
 
       if (!user) {
-        // Remover arquivo se usuário não existe
         if (req.processedImage) {
           const filepath = path.join(
             __dirname,
@@ -153,7 +174,7 @@ const profileController = {
       // Remover foto antiga
       user.removeOldProfilePhoto();
 
-      // Salvar nova foto no banco (APENAS A FOTO, sem tocar em outros campos)
+      // Salvar nova foto
       user.profilePhoto = {
         filename: req.processedImage.filename,
         path: req.processedImage.path,
@@ -162,22 +183,35 @@ const profileController = {
 
       await user.save();
 
+      // CRÍTICO: Resposta com cache busting
+      const timestamp = Date.now();
+      const cacheBuster = Math.random().toString(36).substring(7);
+
       res.status(200).json({
         success: true,
         message: "Foto de perfil atualizada com sucesso!",
         profilePhoto: {
-          url: user.profilePhotoUrl,
+          url: getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req),
           filename: user.profilePhoto.filename,
+          timestamp: timestamp,
+          cacheBuster: cacheBuster,
         },
         user: {
           id: user._id,
-          profilePhotoUrl: user.profilePhotoUrl,
+          name: user.name,
+          email: user.email,
+          profilePhotoUrl: getPhotoUrlWithCacheBusting(
+            user.profilePhotoUrl,
+            req
+          ),
+          avatar: getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req),
+          photoTimestamp: timestamp,
+          cacheBuster: cacheBuster,
         },
       });
     } catch (error) {
       console.error("Erro no upload da foto:", error);
 
-      // Remover arquivo em caso de erro
       if (req.processedImage) {
         const filepath = path.join(
           __dirname,
@@ -211,10 +245,8 @@ const profileController = {
         });
       }
 
-      // Remover arquivo físico
       user.removeOldProfilePhoto();
 
-      // Limpar dados no banco
       user.profilePhoto = {
         filename: null,
         path: null,
@@ -228,7 +260,12 @@ const profileController = {
         message: "Foto de perfil removida com sucesso",
         user: {
           id: user._id,
+          name: user.name,
+          email: user.email,
           profilePhotoUrl: null,
+          avatar: null,
+          photoTimestamp: Date.now(),
+          cacheBuster: Math.random().toString(36).substring(7),
         },
       });
     } catch (error) {
@@ -257,14 +294,22 @@ const profileController = {
         });
       }
 
+      // CRÍTICO: Adicionar cache busting na resposta
+      const timestamp = Date.now();
+      const cacheBuster = Math.random().toString(36).substring(7);
+
       const userData = {
         id: user._id,
         name: user.name,
         fullName: user.fullName,
         email: user.email,
         phone: user.phone,
-        profilePhotoUrl: user.profilePhotoUrl,
-        avatar: user.avatar,
+        profilePhotoUrl: user.profilePhotoUrl
+          ? getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req)
+          : null,
+        avatar: user.profilePhotoUrl
+          ? getPhotoUrlWithCacheBusting(user.profilePhotoUrl, req)
+          : null,
         institution: user.institution,
         coins: user.coins,
         level: user.level,
@@ -279,6 +324,9 @@ const profileController = {
         settings: user.settings,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
+        // CRÍTICO: Adicionar para mobile
+        photoTimestamp: timestamp,
+        cacheBuster: cacheBuster,
       };
 
       res.json({

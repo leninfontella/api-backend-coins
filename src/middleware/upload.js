@@ -3,20 +3,16 @@ const sharp = require("sharp");
 const path = require("path");
 const fs = require("fs");
 
-// IMPORT PARA CACHE EM MEMÓRIA
 const serverCache = require("../utils/serverCache");
 
-// Criar diretório de uploads se não existir
 const uploadsDir = path.join(__dirname, "../uploads/profiles");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log(`📁 Diretório de uploads criado: ${uploadsDir}`);
+  console.log(`DiretÃ³rio de uploads criado: ${uploadsDir}`);
 }
 
-// Configuração do storage
 const storage = multer.memoryStorage();
 
-// Filtro para aceitar apenas imagens
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
@@ -32,75 +28,79 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Configuração do multer
 const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limite
-    files: 1, // Apenas 1 arquivo por vez
+    fileSize: 5 * 1024 * 1024,
+    files: 1,
   },
 });
 
-// Função utilitária para invalidar cache HTTP
 const invalidateHttpCache = (filename) => {
   try {
     const filePath = path.join(uploadsDir, filename);
     if (fs.existsSync(filePath)) {
       const now = new Date();
       fs.utimesSync(filePath, now, now);
-      console.log(`🔄 Cache HTTP invalidado: ${filename}`);
+      console.log(`Cache HTTP invalidado: ${filename}`);
     }
   } catch (error) {
     console.error("Erro ao invalidar cache HTTP:", error);
   }
 };
 
-// Middleware para processar e salvar a imagem
+// FUNÇÃO NOVA: Forçar no-cache nos headers da resposta
+const setNoCacheHeaders = (res) => {
+  res.set({
+    "Cache-Control":
+      "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Surrogate-Control": "no-store",
+  });
+};
+
 const processProfileImage = async (req, res, next) => {
   if (!req.file) {
     return next();
   }
 
   try {
-    console.log(`📤 Processando upload de imagem para usuário: ${req.user.id}`);
+    console.log(`Processando upload de imagem para usuário: ${req.user.id}`);
 
-    // INVALIDAR CACHES DA IMAGEM ANTIGA ANTES DE PROCESSAR
+    // Invalidar e remover imagem antiga
     if (req.user.profileImage) {
       const oldImagePath = `/uploads/profiles/${req.user.profileImage}`;
 
-      // Invalidar cache em memória
       serverCache.invalidate(oldImagePath);
-
-      // Invalidar cache HTTP
       invalidateHttpCache(req.user.profileImage);
 
       console.log(
-        `🔄 Caches invalidados para imagem antiga: ${req.user.profileImage}`
+        `Caches invalidados para imagem antiga: ${req.user.profileImage}`
       );
 
-      // Remover arquivo físico antigo
       const oldFilePath = path.join(uploadsDir, req.user.profileImage);
       if (fs.existsSync(oldFilePath)) {
         try {
           await fs.promises.unlink(oldFilePath);
-          console.log(`🗑️  Arquivo antigo removido: ${req.user.profileImage}`);
+          console.log(`Arquivo antigo removido: ${req.user.profileImage}`);
         } catch (unlinkError) {
           console.error(
-            `⚠️  Erro ao remover arquivo antigo: ${unlinkError.message}`
+            `Erro ao remover arquivo antigo: ${unlinkError.message}`
           );
         }
       }
     }
 
-    // Gerar nome único para o arquivo
+    // CRÍTICO: Usar timestamp + random para garantir URL única
     const timestamp = Date.now();
-    const filename = `profile-${req.user.id}-${timestamp}.webp`;
+    const randomSuffix = Math.random().toString(36).substring(7);
+    const filename = `profile-${req.user.id}-${timestamp}-${randomSuffix}.webp`;
     const filepath = path.join(uploadsDir, filename);
 
-    console.log(`🔄 Gerando nova imagem: ${filename}`);
+    console.log(`Gerando nova imagem: ${filename}`);
 
-    // Processar imagem com sharp
     const imageBuffer = await sharp(req.file.buffer)
       .resize(300, 300, {
         fit: "cover",
@@ -108,29 +108,30 @@ const processProfileImage = async (req, res, next) => {
       })
       .webp({
         quality: 85,
-        effort: 4, // Melhor compressão
+        effort: 4,
       })
       .toBuffer();
 
-    // Salvar arquivo processado
     await fs.promises.writeFile(filepath, imageBuffer);
 
-    // Verificar se o arquivo foi criado com sucesso
     const stats = await fs.promises.stat(filepath);
 
     if (!stats.isFile()) {
       throw new Error("Falha ao criar arquivo de imagem");
     }
 
-    // PRÉ-CARREGAR A NOVA IMAGEM NO CACHE EM MEMÓRIA
+    // PRÉ-CARREGAR no cache em memória
     const newImagePath = `/uploads/profiles/${filename}`;
     serverCache.set(newImagePath, imageBuffer, "image/webp", stats.size);
-    console.log(`💾 Nova imagem pré-carregada no cache: ${filename}`);
+    console.log(`Nova imagem pré-carregada no cache: ${filename}`);
 
-    // Adicionar informações da imagem ao req
+    // CRÍTICO: Adicionar timestamp na URL para mobile
+    const urlWithTimestamp = `${newImagePath}?t=${timestamp}&v=${randomSuffix}`;
+
     req.processedImage = {
       filename: filename,
-      path: `/uploads/profiles/${filename}`,
+      path: newImagePath,
+      pathWithTimestamp: urlWithTimestamp,
       fullPath: filepath,
       size: stats.size,
       originalName: req.file.originalname,
@@ -139,32 +140,31 @@ const processProfileImage = async (req, res, next) => {
       processedAt: new Date(),
       cached: true,
       mtime: stats.mtime,
+      timestamp: timestamp,
+      cacheBuster: randomSuffix,
     };
 
     console.log(
-      `✅ Imagem processada com sucesso: ${filename} (${stats.size} bytes)`
+      `Imagem processada com sucesso: ${filename} (${stats.size} bytes)`
     );
 
     next();
   } catch (error) {
-    console.error("❌ Erro ao processar imagem:", error);
+    console.error("Erro ao processar imagem:", error);
 
-    // LIMPAR CACHES EM CASO DE ERRO
     if (req.processedImage && req.processedImage.path) {
       serverCache.invalidate(req.processedImage.path);
     }
 
-    // Tentar limpar arquivo parcialmente criado
     if (req.processedImage && req.processedImage.fullPath) {
       try {
         await fs.promises.unlink(req.processedImage.fullPath);
-        console.log(`🧹 Arquivo parcial removido após erro`);
+        console.log(`Arquivo parcial removido após erro`);
       } catch (cleanupError) {
         console.error("Erro ao limpar arquivo:", cleanupError);
       }
     }
 
-    // Retornar erro específico baseado no tipo
     let errorMessage = "Erro ao processar imagem";
 
     if (error.message.includes("Input file")) {
@@ -184,21 +184,17 @@ const processProfileImage = async (req, res, next) => {
   }
 };
 
-// Middleware adicional para validar dimensões da imagem
 const validateImageDimensions = async (req, res, next) => {
   if (!req.file) {
     return next();
   }
 
   try {
-    console.log(`📏 Validando dimensões da imagem...`);
+    console.log(`Validando dimensões da imagem...`);
     const metadata = await sharp(req.file.buffer).metadata();
 
-    console.log(
-      `📊 Dimensões da imagem: ${metadata.width}x${metadata.height}px`
-    );
+    console.log(`Dimensões da imagem: ${metadata.width}x${metadata.height}px`);
 
-    // Validar dimensões mínimas
     if (metadata.width < 50 || metadata.height < 50) {
       return res.status(400).json({
         success: false,
@@ -210,7 +206,6 @@ const validateImageDimensions = async (req, res, next) => {
       });
     }
 
-    // Validar dimensões máximas
     if (metadata.width > 5000 || metadata.height > 5000) {
       return res.status(400).json({
         success: false,
@@ -222,7 +217,6 @@ const validateImageDimensions = async (req, res, next) => {
       });
     }
 
-    // Validar se a imagem não está corrompida
     if (!metadata.width || !metadata.height) {
       return res.status(400).json({
         success: false,
@@ -230,10 +224,10 @@ const validateImageDimensions = async (req, res, next) => {
       });
     }
 
-    console.log(`✅ Validação de dimensões aprovada`);
+    console.log(`Validação de dimensões aprovada`);
     next();
   } catch (error) {
-    console.error("❌ Erro ao validar dimensões:", error);
+    console.error("Erro ao validar dimensões:", error);
     return res.status(400).json({
       success: false,
       message: "Erro ao validar imagem - arquivo pode estar corrompido",
@@ -242,19 +236,17 @@ const validateImageDimensions = async (req, res, next) => {
   }
 };
 
-// Middleware para limpeza de imagens antigas (opcional)
 const cleanupOldImages = async (req, res, next) => {
   try {
-    // Executar limpeza apenas ocasionalmente (1% de chance)
     if (Math.random() > 0.01) {
       return next();
     }
 
-    console.log(`🧹 Executando limpeza de imagens antigas...`);
+    console.log(`Executando limpeza de imagens antigas...`);
 
     const files = await fs.promises.readdir(uploadsDir);
     const now = Date.now();
-    const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 dias
+    const maxAge = 30 * 24 * 60 * 60 * 1000;
     let removed = 0;
 
     for (const file of files) {
@@ -263,7 +255,6 @@ const cleanupOldImages = async (req, res, next) => {
       const filePath = path.join(uploadsDir, file);
       const stats = await fs.promises.stat(filePath);
 
-      // Remove arquivos muito antigos
       if (now - stats.mtime.getTime() > maxAge) {
         await fs.promises.unlink(filePath);
         serverCache.invalidate(`/uploads/profiles/${file}`);
@@ -272,24 +263,20 @@ const cleanupOldImages = async (req, res, next) => {
     }
 
     if (removed > 0) {
-      console.log(
-        `🗑️  Limpeza concluída: ${removed} arquivos antigos removidos`
-      );
+      console.log(`Limpeza concluída: ${removed} arquivos antigos removidos`);
     }
   } catch (error) {
-    console.error("⚠️  Erro na limpeza de arquivos antigos:", error);
-    // Não interrompe o fluxo principal
+    console.error("Erro na limpeza de arquivos antigos:", error);
   }
 
   next();
 };
 
-// Função utilitária para invalidar cache de usuário
 const invalidateUserCache = (userId) => {
   try {
     const pattern = `profile-${userId}-`;
     const removed = serverCache.invalidatePattern(pattern);
-    console.log(`🔄 Cache invalidado para usuário ${userId}: ${removed} itens`);
+    console.log(`Cache invalidado para usuário ${userId}: ${removed} itens`);
     return removed;
   } catch (error) {
     console.error("Erro ao invalidar cache do usuário:", error);
@@ -297,7 +284,6 @@ const invalidateUserCache = (userId) => {
   }
 };
 
-// Função para verificar saúde do sistema de upload
 const getUploadHealth = () => {
   try {
     const dirExists = fs.existsSync(uploadsDir);
@@ -330,4 +316,5 @@ module.exports = {
   invalidateHttpCache,
   getUploadHealth,
   uploadsDir,
+  setNoCacheHeaders, // EXPORTAR nova função
 };
