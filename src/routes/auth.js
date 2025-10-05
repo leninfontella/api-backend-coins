@@ -9,6 +9,10 @@ router.post(
   [
     check("name", "Nome é obrigatório").trim().notEmpty(),
     check("email", "Email inválido").isEmail().normalizeEmail(),
+    check("phone", "Telefone inválido")
+      .optional({ checkFalsy: true })
+      .matches(/^\(\d{2}\)\s\d{5}-\d{4}$/)
+      .withMessage("Formato: (XX) XXXXX-XXXX"),
     check("password", "Senha com mínimo de 8 caracteres").isLength({ min: 8 }),
     check("confirmPassword").custom((value, { req }) => {
       if (value !== req.body.password)

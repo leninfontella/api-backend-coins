@@ -21,12 +21,12 @@ exports.register = async (req, res, next) => {
   if (!errors.isEmpty())
     return res.status(400).json({ errors: errors.array() });
 
-  const { name, email, password } = req.body;
+  const { name, email, phone, password } = req.body;
   try {
     const exists = await User.findOne({ email });
     if (exists) return res.status(409).json({ message: "Email já cadastrado" });
 
-    const user = new User({ name, email, password });
+    const user = new User({ name, email, phone, password });
     await user.save();
 
     const accessToken = createAccessToken(user._id);

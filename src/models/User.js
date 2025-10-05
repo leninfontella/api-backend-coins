@@ -37,10 +37,10 @@ const userSchema = new mongoose.Schema(
       trim: true,
       maxlength: [20, "Telefone não pode ter mais de 20 caracteres"],
       default: "",
-      match: [
-        /^(\+55\s?)?(\(?[1-9]{2}\)?\s?)?9?[0-9]{4}[-\s]?[0-9]{4}$/,
-        "Telefone inválido",
-      ],
+      // match: [
+      //   /^(\+55\s?)?(\(?[1-9]{2}\)?\s?)?9?[0-9]{4}[-\s]?[0-9]{4}$/,
+      //   "Telefone inválido",
+      // ],
     },
 
     // ========== FOTO DE PERFIL ==========
