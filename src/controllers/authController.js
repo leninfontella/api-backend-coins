@@ -54,6 +54,7 @@ exports.register = async (req, res, next) => {
           id: user._id,
           name: user.name,
           email: user.email,
+          phone: user.phone,
           coins: user.coins,
           level: user.level,
           totalDonated: user.totalDonated,
