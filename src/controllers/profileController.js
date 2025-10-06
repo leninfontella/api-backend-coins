@@ -48,8 +48,11 @@ const profileController = {
       // Atualizar apenas dados básicos validados
       if (name && name.trim()) user.name = name.trim();
       if (email && email.trim()) user.email = email.trim().toLowerCase();
+
+      // ✅ CORREÇÃO APLICADA: Atualiza o campo 'phone' no objeto do usuário
       if (phone !== undefined) user.phone = phone.trim();
 
+      // 💾 CORREÇÃO APLICADA: Persiste todas as alterações no banco de dados
       await user.save();
 
       // Preparar dados atualizados do usuário para resposta
