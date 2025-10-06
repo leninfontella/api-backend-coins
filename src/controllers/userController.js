@@ -22,6 +22,7 @@ exports.getProfile = async (req, res, next) => {
           fullName: user.fullName || user.name, // CORREÇÃO: Garantir nome completo
           displayName: user.fullName || user.name, // Adicionar displayName
           email: user.email,
+          phone: user.phone,
           coins: user.coins,
           balance: user.coins, // Compatibilidade
           level: user.level,
@@ -215,6 +216,7 @@ exports.getUserById = async (req, res, next) => {
           fullName: user.fullName || user.name,
           displayName: user.fullName || user.name,
           email: user.email,
+          phone: user.phone,
           username: user.username,
           coins: user.coins,
           level: user.level,
@@ -296,6 +298,7 @@ exports.searchUsers = async (req, res, next) => {
       displayName: user.fullName || user.name,
       username: user.username || user.email || "sem-username",
       email: user.email,
+      phone: user.phone,
       avatar: user.avatar || "👤",
       coins: user.coins || 0,
       level: user.level || 1,

@@ -84,6 +84,7 @@ const authMiddleware = async (req, res, next) => {
       id: user._id.toString(),
       name: user.name,
       email: user.email,
+      phone: user.phone || "",
       isActive: user.isActive,
       // Adicionar outros campos necessários do usuário
       ...user.toObject(),
