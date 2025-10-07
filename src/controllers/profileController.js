@@ -9,6 +9,8 @@ const profileController = {
       const userId = req.user.id;
       const { name, email, phone } = req.body;
 
+      console.log("📥 Dados recebidos no backend:", { name, email, phone });
+
       // Buscar usuário atual
       const user = await User.findById(userId);
       if (!user) {
@@ -17,6 +19,12 @@ const profileController = {
           message: "Usuário não encontrado",
         });
       }
+
+      console.log("👤 Usuário atual:", {
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      });
 
       // 🔧 VALIDAÇÃO CRÍTICA: Verificar se o email pertence ao usuário atual
       if (email && email.toLowerCase() !== user.email.toLowerCase()) {
@@ -45,15 +53,42 @@ const profileController = {
         };
       }
 
-      // Atualizar apenas dados básicos validados
-      if (name && name.trim()) user.name = name.trim();
-      if (email && email.trim()) user.email = email.trim().toLowerCase();
+      // 🔧 CORREÇÃO CRÍTICA: Atualizar campos individualmente
+      let hasChanges = false;
 
-      // ✅ CORREÇÃO APLICADA: Atualiza o campo 'phone' no objeto do usuário
-      if (phone !== undefined) user.phone = phone.trim();
+      if (name && name.trim() && name.trim() !== user.name) {
+        user.name = name.trim();
+        hasChanges = true;
+        console.log("✅ Nome atualizado:", user.name);
+      }
 
-      // 💾 CORREÇÃO APLICADA: Persiste todas as alterações no banco de dados
-      await user.save();
+      if (
+        email &&
+        email.trim() &&
+        email.trim().toLowerCase() !== user.email.toLowerCase()
+      ) {
+        user.email = email.trim().toLowerCase();
+        hasChanges = true;
+        console.log("✅ Email atualizado:", user.email);
+      }
+
+      // 🔧 CORREÇÃO CRÍTICA: Atualizar telefone mesmo se vazio
+      if (phone !== undefined) {
+        const cleanPhone = phone.trim();
+        if (cleanPhone !== user.phone) {
+          user.phone = cleanPhone;
+          hasChanges = true;
+          console.log("✅ Telefone atualizado:", user.phone);
+        }
+      }
+
+      // 🔧 CORREÇÃO CRÍTICA: Sempre salvar, mesmo sem mudanças de texto (pode ter foto)
+      if (hasChanges || req.processedImage) {
+        await user.save();
+        console.log("💾 Usuário salvo no banco de dados");
+      } else {
+        console.log("⚠️ Nenhuma mudança detectada, não salvando");
+      }
 
       // Preparar dados atualizados do usuário para resposta
       const updatedUser = {
@@ -61,7 +96,7 @@ const profileController = {
         name: user.name,
         fullName: user.fullName,
         email: user.email,
-        phone: user.phone,
+        phone: user.phone, // ✅ GARANTIR que phone está na resposta
         profilePhotoUrl: user.profilePhotoUrl,
         avatar: user.avatar,
         institution: user.institution,
@@ -78,6 +113,12 @@ const profileController = {
         updatedAt: user.updatedAt,
       };
 
+      console.log("📤 Dados enviados para frontend:", {
+        name: updatedUser.name,
+        email: updatedUser.email,
+        phone: updatedUser.phone,
+      });
+
       res.json({
         success: true,
         message: "Perfil atualizado com sucesso!",
@@ -90,7 +131,7 @@ const profileController = {
           : undefined,
       });
     } catch (error) {
-      console.error("Erro ao atualizar o perfil:", error);
+      console.error("❌ Erro ao atualizar o perfil:", error);
 
       // Se houve erro e uma imagem foi processada, remover o arquivo
       if (req.processedImage) {
@@ -174,6 +215,9 @@ const profileController = {
         },
         user: {
           id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone, // ✅ Incluir phone
           profilePhotoUrl: user.profilePhotoUrl,
         },
       });
@@ -231,6 +275,9 @@ const profileController = {
         message: "Foto de perfil removida com sucesso",
         user: {
           id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone, // ✅ Incluir phone
           profilePhotoUrl: null,
         },
       });
@@ -265,7 +312,7 @@ const profileController = {
         name: user.name,
         fullName: user.fullName,
         email: user.email,
-        phone: user.phone,
+        phone: user.phone, // ✅ Incluir phone
         profilePhotoUrl: user.profilePhotoUrl,
         avatar: user.avatar,
         institution: user.institution,
@@ -283,6 +330,8 @@ const profileController = {
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       };
+
+      console.log("📤 GET Profile - Telefone enviado:", userData.phone);
 
       res.json({
         success: true,
