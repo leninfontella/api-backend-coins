@@ -55,7 +55,7 @@ const authMiddleware = async (req, res, next) => {
       console.log("✅ Token decodificado:", { userId: decoded.id });
     }
 
-    // Buscar usuário no banco
+    // 🔧 CORREÇÃO CRÍTICA: Buscar usuário ATUALIZADO do banco
     const user = await User.findById(decoded.id).select(
       "-password -refreshTokens"
     );
@@ -79,19 +79,22 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    // Adicionar dados do usuário ao request
+    // 🔧 CORREÇÃO CRÍTICA: Usar dados ATUALIZADOS do banco
+    // Converter para objeto primeiro, depois adicionar campos customizados
+    const userObject = user.toObject();
+
     req.user = {
-      id: user._id.toString(),
-      name: user.name,
-      email: user.email,
-      phone: user.phone || "",
-      isActive: user.isActive,
-      // Adicionar outros campos necessários do usuário
-      ...user.toObject(),
+      ...userObject, // ✅ Spread PRIMEIRO (dados do banco)
+      id: user._id.toString(), // ✅ Sobrescrever apenas ID formatado
+      // Não sobrescrever phone, name, email - usar do banco!
     };
 
     if (process.env.NODE_ENV === "development") {
-      console.log("✅ Usuário autenticado:", req.user.name);
+      console.log("✅ Usuário autenticado:", {
+        name: req.user.name,
+        email: req.user.email,
+        phone: req.user.phone,
+      });
     }
 
     next();
