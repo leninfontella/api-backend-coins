@@ -44,6 +44,7 @@ const bucket = storage.bucket(bucketName);
  * @param {string} mimetype - Tipo MIME da imagem
  * @returns {Promise<Object>} URL pública e metadados
  */
+
 async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
   try {
     console.log(`📤 Iniciando upload para GCS: ${filename}`);
@@ -83,15 +84,11 @@ async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
         reject(error);
       });
 
-      blobStream.on("finish", async () => {
-        try {
-          // Tornar arquivo público
-          await blob.makePublic();
-          console.log(`✅ Upload GCS concluído: ${filename}`);
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
+      blobStream.on("finish", () => {
+        // 🚨 CORREÇÃO: Removemos a chamada `await blob.makePublic()`
+        // A permissão pública é herdada via IAM do Bucket.
+        console.log(`✅ Upload GCS concluído: ${filename}`);
+        resolve();
       });
 
       blobStream.end(processedBuffer);
@@ -109,6 +106,7 @@ async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
       path: `profiles/${filename}`,
     };
   } catch (error) {
+    // Apenas lança o erro da falha do stream, sem tentar acessar .message desnecessariamente
     console.error("❌ Erro no serviço GCS:", error);
     throw new Error(`Falha no upload GCS: ${error.message}`);
   }
