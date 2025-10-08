@@ -2,6 +2,9 @@ const User = require("../models/User");
 const path = require("path");
 const fs = require("fs");
 
+// 🆕 IMPORT DO SERVIÇO GCS
+const gcsService = require("../services/gcsService");
+
 const profileController = {
   // Atualizar perfil completo (com validação de proprietário)
   async updateProfile(req, res) {
@@ -44,12 +47,21 @@ const profileController = {
 
       // Se há uma nova foto, remover a anterior
       if (req.processedImage) {
-        user.removeOldProfilePhoto();
+        // 🆕 Remover do GCS em vez do sistema de arquivos local
+        if (user.profilePhoto && user.profilePhoto.filename) {
+          await gcsService.deleteImage(user.profilePhoto.filename);
+          console.log(
+            `🗑️  Foto antiga removida do GCS: ${user.profilePhoto.filename}`
+          );
+        }
 
+        // 🆕 Salvar URL do GCS em vez de path local
         user.profilePhoto = {
           filename: req.processedImage.filename,
-          path: req.processedImage.path,
+          path: req.processedImage.publicUrl, // URL pública do GCS
           uploadDate: new Date(),
+          storage: "gcs", // 🆕 Indicador de storage
+          bucket: req.processedImage.bucket, // 🆕 Nome do bucket
         };
       }
 
@@ -96,8 +108,8 @@ const profileController = {
         name: user.name,
         fullName: user.fullName,
         email: user.email,
-        phone: user.phone, // ✅ GARANTIR que phone está na resposta
-        profilePhotoUrl: user.profilePhotoUrl,
+        phone: user.phone,
+        profilePhotoUrl: user.profilePhotoUrl, // 🆕 Agora retorna URL do GCS
         avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
@@ -117,6 +129,7 @@ const profileController = {
         name: updatedUser.name,
         email: updatedUser.email,
         phone: updatedUser.phone,
+        profilePhotoUrl: updatedUser.profilePhotoUrl,
       });
 
       res.json({
@@ -125,24 +138,26 @@ const profileController = {
         user: updatedUser,
         profilePhoto: req.processedImage
           ? {
-              url: user.profilePhotoUrl,
+              url: user.profilePhotoUrl, // URL do GCS
               filename: user.profilePhoto.filename,
+              storage: "gcs", // 🆕 Indicador
             }
           : undefined,
       });
     } catch (error) {
       console.error("❌ Erro ao atualizar o perfil:", error);
 
-      // Se houve erro e uma imagem foi processada, remover o arquivo
-      if (req.processedImage) {
-        const filepath = path.join(
-          __dirname,
-          "../uploads/profiles",
-          req.processedImage.filename
-        );
-        fs.unlink(filepath, (err) => {
-          if (err) console.log("Erro ao remover arquivo após falha:", err);
-        });
+      // 🆕 Se houve erro e uma imagem foi processada, remover do GCS
+      if (req.processedImage && req.processedImage.filename) {
+        try {
+          await gcsService.deleteImage(req.processedImage.filename);
+          console.log("🧹 Imagem removida do GCS após erro");
+        } catch (deleteError) {
+          console.error(
+            "Erro ao remover imagem do GCS após falha:",
+            deleteError
+          );
+        }
       }
 
       // Tratamento específico para erro de email duplicado
@@ -169,16 +184,10 @@ const profileController = {
       const user = await User.findById(userId);
 
       if (!user) {
-        // Remover arquivo se usuário não existe
-        if (req.processedImage) {
-          const filepath = path.join(
-            __dirname,
-            "../uploads/profiles",
-            req.processedImage.filename
-          );
-          fs.unlink(filepath, (err) => {
-            if (err) console.log("Erro ao remover arquivo:", err);
-          });
+        // 🆕 Remover arquivo do GCS se usuário não existe
+        if (req.processedImage && req.processedImage.filename) {
+          await gcsService.deleteImage(req.processedImage.filename);
+          console.log("🧹 Imagem removida do GCS (usuário não encontrado)");
         }
 
         return res.status(404).json({
@@ -194,14 +203,21 @@ const profileController = {
         });
       }
 
-      // Remover foto antiga
-      user.removeOldProfilePhoto();
+      // 🆕 Remover foto antiga do GCS
+      if (user.profilePhoto && user.profilePhoto.filename) {
+        await gcsService.deleteImage(user.profilePhoto.filename);
+        console.log(
+          `🗑️  Foto antiga removida do GCS: ${user.profilePhoto.filename}`
+        );
+      }
 
-      // Salvar nova foto no banco (APENAS A FOTO, sem tocar em outros campos)
+      // 🆕 Salvar nova foto no banco (URL do GCS)
       user.profilePhoto = {
         filename: req.processedImage.filename,
-        path: req.processedImage.path,
+        path: req.processedImage.publicUrl, // URL pública do GCS
         uploadDate: new Date(),
+        storage: "gcs", // 🆕 Indicador de storage
+        bucket: req.processedImage.bucket, // 🆕 Nome do bucket
       };
 
       await user.save();
@@ -210,30 +226,29 @@ const profileController = {
         success: true,
         message: "Foto de perfil atualizada com sucesso!",
         profilePhoto: {
-          url: user.profilePhotoUrl,
+          url: user.profilePhotoUrl, // URL do GCS
           filename: user.profilePhoto.filename,
+          storage: "gcs", // 🆕 Indicador
         },
         user: {
           id: user._id,
           name: user.name,
           email: user.email,
-          phone: user.phone, // ✅ Incluir phone
-          profilePhotoUrl: user.profilePhotoUrl,
+          phone: user.phone,
+          profilePhotoUrl: user.profilePhotoUrl, // URL do GCS
         },
       });
     } catch (error) {
       console.error("Erro no upload da foto:", error);
 
-      // Remover arquivo em caso de erro
-      if (req.processedImage) {
-        const filepath = path.join(
-          __dirname,
-          "../uploads/profiles",
-          req.processedImage.filename
-        );
-        fs.unlink(filepath, (err) => {
-          if (err) console.log("Erro ao remover arquivo:", err);
-        });
+      // 🆕 Remover arquivo do GCS em caso de erro
+      if (req.processedImage && req.processedImage.filename) {
+        try {
+          await gcsService.deleteImage(req.processedImage.filename);
+          console.log("🧹 Imagem removida do GCS após erro");
+        } catch (deleteError) {
+          console.error("Erro ao remover imagem do GCS:", deleteError);
+        }
       }
 
       res.status(500).json({
@@ -258,14 +273,19 @@ const profileController = {
         });
       }
 
-      // Remover arquivo físico
-      user.removeOldProfilePhoto();
+      // 🆕 Remover arquivo do GCS
+      if (user.profilePhoto && user.profilePhoto.filename) {
+        await gcsService.deleteImage(user.profilePhoto.filename);
+        console.log(`🗑️  Foto removida do GCS: ${user.profilePhoto.filename}`);
+      }
 
       // Limpar dados no banco
       user.profilePhoto = {
         filename: null,
         path: null,
         uploadDate: null,
+        storage: null,
+        bucket: null,
       };
 
       await user.save();
@@ -277,7 +297,7 @@ const profileController = {
           id: user._id,
           name: user.name,
           email: user.email,
-          phone: user.phone, // ✅ Incluir phone
+          phone: user.phone,
           profilePhotoUrl: null,
         },
       });
@@ -312,8 +332,8 @@ const profileController = {
         name: user.name,
         fullName: user.fullName,
         email: user.email,
-        phone: user.phone, // ✅ Incluir phone
-        profilePhotoUrl: user.profilePhotoUrl,
+        phone: user.phone,
+        profilePhotoUrl: user.profilePhotoUrl, // 🆕 URL do GCS
         avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
@@ -331,7 +351,10 @@ const profileController = {
         updatedAt: user.updatedAt,
       };
 
-      console.log("📤 GET Profile - Telefone enviado:", userData.phone);
+      console.log("📤 GET Profile - Dados enviados:", {
+        phone: userData.phone,
+        profilePhotoUrl: userData.profilePhotoUrl,
+      });
 
       res.json({
         success: true,
@@ -342,6 +365,58 @@ const profileController = {
       res.status(500).json({
         success: false,
         message: "Erro interno do servidor",
+        error:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  },
+
+  // 🆕 NOVO MÉTODO: Verificar saúde do sistema de storage
+  async getStorageHealth(req, res) {
+    try {
+      const health = await gcsService.checkHealth();
+
+      res.json({
+        success: true,
+        storage: {
+          type: "Google Cloud Storage",
+          ...health,
+        },
+      });
+    } catch (error) {
+      console.error("Erro ao verificar saúde do storage:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao verificar saúde do storage",
+        error:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  },
+
+  // 🆕 NOVO MÉTODO: Listar imagens de perfil (admin/debug)
+  async listProfileImages(req, res) {
+    try {
+      // Verificar se usuário é admin (adicione sua lógica de autorização)
+      // if (!req.user.isAdmin) {
+      //   return res.status(403).json({
+      //     success: false,
+      //     message: "Acesso negado",
+      //   });
+      // }
+
+      const images = await gcsService.listProfileImages();
+
+      res.json({
+        success: true,
+        count: images.length,
+        images: images,
+      });
+    } catch (error) {
+      console.error("Erro ao listar imagens:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao listar imagens",
         error:
           process.env.NODE_ENV === "development" ? error.message : undefined,
       });

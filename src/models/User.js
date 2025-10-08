@@ -45,18 +45,16 @@ const userSchema = new mongoose.Schema(
 
     // ========== FOTO DE PERFIL ==========
     profilePhoto: {
-      filename: {
+      filename: { type: String, default: null },
+      path: { type: String, default: null },
+      uploadDate: { type: Date, default: null },
+      // 🆕 NOVOS CAMPOS PARA GCS
+      storage: {
         type: String,
+        enum: ["local", "gcs", null],
         default: null,
       },
-      path: {
-        type: String,
-        default: null,
-      },
-      uploadDate: {
-        type: Date,
-        default: null,
-      },
+      bucket: { type: String, default: null },
     },
 
     // ========== CAMPOS PARA SISTEMA DE BUSCA ==========
@@ -320,8 +318,18 @@ userSchema.virtual("firstName").get(function () {
 // Virtual para URL completa da foto - VERSÃO CORRIGIDA
 
 userSchema.virtual("profilePhotoUrl").get(function () {
-  if (this.profilePhoto && this.profilePhoto.filename) {
-    return `${process.env.BASE_URL}/uploads/profiles/${this.profilePhoto.filename}`;
+  if (this.profilePhoto && this.profilePhoto.path) {
+    // 🆕 Se for GCS, retorna a URL diretamente (já é pública)
+    if (this.profilePhoto.storage === "gcs") {
+      return this.profilePhoto.path;
+    }
+
+    // Se for local, constrói a URL relativa
+    if (this.profilePhoto.path.startsWith("/uploads/")) {
+      return this.profilePhoto.path;
+    }
+
+    return `/uploads/profiles/${this.profilePhoto.filename}`;
   }
   return null;
 });
@@ -426,20 +434,90 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 // Método para remover foto anterior
-userSchema.methods.removeOldProfilePhoto = function () {
+userSchema.methods.removeOldProfilePhoto = async function () {
   if (this.profilePhoto && this.profilePhoto.filename) {
-    const fs = require("fs");
-    const path = require("path");
-    const oldPath = path.join(
-      __dirname,
-      "../uploads/profiles",
-      this.profilePhoto.filename
-    );
+    try {
+      // 🆕 Se for GCS, deletar do GCS
+      if (this.profilePhoto.storage === "gcs") {
+        const gcsService = require("../services/gcsService");
+        await gcsService.deleteImage(this.profilePhoto.filename);
+        console.log(
+          `🗑️  Foto antiga removida do GCS: ${this.profilePhoto.filename}`
+        );
+        return;
+      }
 
-    fs.unlink(oldPath, (err) => {
-      if (err) console.log("Erro ao remover foto antiga:", err);
-    });
+      // Se for local, deletar do sistema de arquivos
+      const fs = require("fs");
+      const path = require("path");
+      const oldPath = path.join(
+        __dirname,
+        "../uploads/profiles",
+        this.profilePhoto.filename
+      );
+
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+        console.log(`🗑️  Foto antiga removida: ${this.profilePhoto.filename}`);
+      }
+    } catch (error) {
+      console.error("Erro ao remover foto antiga:", error);
+    }
   }
+};
+
+userSchema.methods.migratePhotoToGCS = async function () {
+  if (this.profilePhoto && this.profilePhoto.storage === "local") {
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      const gcsService = require("../services/gcsService");
+
+      const localPath = path.join(
+        __dirname,
+        "../uploads/profiles",
+        this.profilePhoto.filename
+      );
+
+      if (!fs.existsSync(localPath)) {
+        console.log(
+          `⚠️  Arquivo local não encontrado para migração: ${this.profilePhoto.filename}`
+        );
+        return false;
+      }
+
+      // Ler arquivo local
+      const imageBuffer = fs.readFileSync(localPath);
+
+      // Fazer upload para GCS
+      const uploadResult = await gcsService.uploadImage(
+        imageBuffer,
+        this.profilePhoto.filename,
+        "image/webp"
+      );
+
+      if (uploadResult.success) {
+        // Atualizar dados no banco
+        this.profilePhoto.path = uploadResult.url;
+        this.profilePhoto.storage = "gcs";
+        this.profilePhoto.bucket = uploadResult.bucket;
+
+        await this.save();
+
+        // Deletar arquivo local após sucesso
+        fs.unlinkSync(localPath);
+
+        console.log(`✅ Foto migrada para GCS: ${this.profilePhoto.filename}`);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error("Erro ao migrar foto para GCS:", error);
+      return false;
+    }
+  }
+  return false;
 };
 
 // Método adicional para obter URL da foto com domínio completo

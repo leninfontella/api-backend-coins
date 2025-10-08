@@ -4,8 +4,9 @@ const { upload, processProfileImage } = require("../middleware/upload");
 const profileController = require("../controllers/profileController");
 const authMiddleware = require("../middleware/authMiddleware");
 
-// 🆕 IMPORTS PARA CACHE
+// 🆕 IMPORTS PARA CACHE E GCS
 const serverCache = require("../utils/serverCache");
+const gcsService = require("../services/gcsService");
 
 // Middleware de autenticação aplicado a todas as rotas
 router.use(authMiddleware);
@@ -25,8 +26,16 @@ router.post(
     try {
       // Se há uma imagem antiga, invalida o cache
       if (req.user.profileImage) {
+        // Invalidar cache em memória (se houver URL cacheada)
         const oldImagePath = `/uploads/profiles/${req.user.profileImage}`;
         serverCache.invalidate(oldImagePath);
+
+        // 🆕 Para GCS, a URL é diferente - invalidar também
+        const gcsUrl = gcsService.getPublicUrl(req.user.profileImage);
+        if (gcsUrl) {
+          serverCache.invalidate(gcsUrl);
+        }
+
         console.log(
           `🔄 Cache invalidado para upload de nova foto: ${req.user.profileImage}`
         );
@@ -52,6 +61,13 @@ router.put(
       if (req.file && req.user.profileImage) {
         const oldImagePath = `/uploads/profiles/${req.user.profileImage}`;
         serverCache.invalidate(oldImagePath);
+
+        // 🆕 Invalidar URL do GCS também
+        const gcsUrl = gcsService.getPublicUrl(req.user.profileImage);
+        if (gcsUrl) {
+          serverCache.invalidate(gcsUrl);
+        }
+
         console.log(
           `🔄 Cache invalidado para atualização completa: ${req.user.profileImage}`
         );
@@ -74,6 +90,13 @@ router.delete(
       if (req.user.profileImage) {
         const imagePath = `/uploads/profiles/${req.user.profileImage}`;
         serverCache.invalidate(imagePath);
+
+        // 🆕 Invalidar URL do GCS
+        const gcsUrl = gcsService.getPublicUrl(req.user.profileImage);
+        if (gcsUrl) {
+          serverCache.invalidate(gcsUrl);
+        }
+
         console.log(
           `🗑️  Cache invalidado para remoção de foto: ${req.user.profileImage}`
         );
@@ -145,6 +168,81 @@ router.post("/cache/invalidate-my-images", async (req, res) => {
       success: false,
       message: "Erro interno do servidor",
       error: error.message,
+    });
+  }
+});
+
+// 🆕 ROTA PARA VERIFICAR SAÚDE DO STORAGE (GCS)
+router.get("/storage/health", profileController.getStorageHealth);
+
+// 🆕 ROTA PARA LISTAR IMAGENS (ADMIN/DEBUG)
+router.get("/storage/images", profileController.listProfileImages);
+
+// 🆕 ROTA PARA LIMPEZA MANUAL DE IMAGENS ANTIGAS
+router.post("/storage/cleanup", async (req, res) => {
+  try {
+    // Verificar se usuário é admin (adicione sua lógica de autorização)
+    // if (!req.user.isAdmin) {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Acesso negado",
+    //   });
+    // }
+
+    const { daysOld } = req.body;
+    const days = daysOld || 30;
+
+    console.log(`🧹 Iniciando limpeza manual de imagens (>${days} dias)`);
+
+    const removed = await gcsService.cleanupOldImages(days);
+
+    res.json({
+      success: true,
+      message: `Limpeza concluída: ${removed} arquivo(s) removido(s)`,
+      data: {
+        filesRemoved: removed,
+        daysOld: days,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error("Erro na limpeza manual:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro ao executar limpeza",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+});
+
+// 🆕 ROTA PARA VERIFICAR SE ARQUIVO EXISTE NO GCS
+router.get("/storage/check/:filename", async (req, res) => {
+  try {
+    const { filename } = req.params;
+
+    if (!filename) {
+      return res.status(400).json({
+        success: false,
+        message: "filename é obrigatório",
+      });
+    }
+
+    const exists = await gcsService.fileExists(filename);
+
+    res.json({
+      success: true,
+      data: {
+        filename,
+        exists,
+        url: exists ? gcsService.getPublicUrl(filename) : null,
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao verificar arquivo:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro ao verificar arquivo",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 });

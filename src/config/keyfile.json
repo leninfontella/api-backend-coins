@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "gen-lang-client-0874180628",
+  "private_key_id": "3a87ebef67d996e06c2c9fff0372af6671ca4bfb",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC39Db2p+2dYh3N\nBvPWeRlEYJ8wQ9vEE4KbOqPfr1Ros6WLLZUmYp8EqV6oYgypSSTUfPIJMPM+gGL9\nS7A7D61E4kLMKyMOhNq0s2uigEoblvN7vExOo8kI/WF54CD4tGITygIW4ap7uMak\nRXQHNNmzUh07hFijSDmONn75TK55MgpTni9uHU1yJhjAA48BFGXJxEA9H6+vZoSG\nwJDswQvvjweqMhBdFZ1fhvzBziN6XEiWFXs4cUSPTRAE9NacF8zMfZSgObVXL5lL\n7kc7WxjKXonNunzkw0uF7ysZ+qQluDcqafqZ0t9an6OPBIf9BuTlcoJoYPLzMmzj\nlQ5CS/NvAgMBAAECggEATQxzQRjRQ8xm4wt4cmrClItL4fFqSVRKri3/mZ9cYYZt\nXkA3ap6AMHmodiqrVvSWApJa5lKkb5di3ukm5XYJgwKqK84dnuUyneFQwf2uDKRL\nU5Zo979OYv+OJngkF0emlNdVzLO0rqGUQhX9JU+Tp7JLIDSs06daxCA7Srw9j/EZ\n5cYxNj8OFrNMVnotzJR5LSxAy2IXPaUIl67aFGPT6hlY3tnK6yQIOAYBQFd5x++w\nHwhLFqFel0Zrfcyp4YqJKPBqg4mfhceGe9vMcJKLu4OFczp5WwdxqQxGGQHCi2Pm\nVek1j6SYupmB8Kwq+GcQxceNm6QHZ38PyVNnXJyhEQKBgQDcqf+ZaltYofFXmqnw\n5SHdvFnRiG9p4rywYTX3sXCPvWpxFI8HQd/NOTkmV6vE+TR6S+jWT3EbbZaJQnRY\nVCffEeX0lXezFZNkJxZqELa+JXpMmBKV17cu8EL8JwUo+LlxAMabVIk1SH6sBjeU\nzcrKgWPqA8D7+jUmHS1d9A6T9QKBgQDVaU5kNaF/n92VY+K+x9LrHfJjS0vE9AkQ\nZ6ZMlCLz2YihByDwehDeh6WyGIGDKU8ft9OBM5FDOE9V+4Uac/1VO/eYZSUF3Jlt\nDMxL/m1m9DUMtQgfjYP2rdPiDZ00eT2nIJidZJDbHVrp+P3vBQ/i/HqYvH+OadSH\nQG9BScgvUwKBgQC+fgMpbadt3F98QQhz7VpPEUp4mE+WGSbLHSB5s7R4YgyBkj3n\nBfcuMzgi4YxnfrrO2LkoSWxbQT+zPqsxlXTWHZ1mh6HN99JFo3i2F7eqbrAlbyKc\nOJzq6H7rLsRFmnJ8Gy9Y6KGKXgr8dmGFFCL8rraSTqtK27UGMin38bikAQKBgGG/\nxDo+HmTYkqPUho0f9cnfg6BbYq8pn+U1tIQq7f+HSf+HxlyfbI6gzxJOCzRKfYVn\nq6boOcbySdR2SjcdnZGmz/erjFOtAVFjpUfBl9aqUIoreTcKmMEqSXynA7R/O/AL\nDBw7beYPAg9dDuKmDOrI/lZrMHnIm6H/r3XWF60lAoGBALJNzwSevO32Ic/MhdzI\nyzbQlwmIPvIhhJXmmSjf8Me0syA3VqRup9C4afqMgENPQducAVCT6j7uw5kqCpFT\nBXH/HVvhxxzQrMi8ZRxrnVt9eV7TEoz1cFqgn84/a0wLw17z7eWoCT8wKZgnfL0r\noREdpHZWzstjUUOvMVJA3kBH\n-----END PRIVATE KEY-----\n",
+  "client_email": "altrum-storage-uploader@gen-lang-client-0874180628.iam.gserviceaccount.com",
+  "client_id": "103868046721495738965",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/altrum-storage-uploader%40gen-lang-client-0874180628.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

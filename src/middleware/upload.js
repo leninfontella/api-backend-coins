@@ -3,17 +3,20 @@ const sharp = require("sharp");
 const path = require("path");
 const fs = require("fs");
 
+// IMPORT PARA GCS
+const gcsService = require("../services/gcsService");
+
 // IMPORT PARA CACHE EM MEMÓRIA
 const serverCache = require("../utils/serverCache");
 
-// Criar diretório de uploads se não existir
+// Criar diretório de uploads se não existir (mantém como fallback/backup local)
 const uploadsDir = path.join(__dirname, "../uploads/profiles");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
   console.log(`📁 Diretório de uploads criado: ${uploadsDir}`);
 }
 
-// Configuração do storage
+// Configuração do storage - usa memória para processar antes de enviar ao GCS
 const storage = multer.memoryStorage();
 
 // Filtro para aceitar apenas imagens
@@ -42,7 +45,7 @@ const upload = multer({
   },
 });
 
-// Função utilitária para invalidar cache HTTP
+// Função utilitária para invalidar cache HTTP (ainda útil para backup local)
 const invalidateHttpCache = (filename) => {
   try {
     const filePath = path.join(uploadsDir, filename);
@@ -56,7 +59,7 @@ const invalidateHttpCache = (filename) => {
   }
 };
 
-// Middleware para processar e salvar a imagem
+// Middleware para processar e fazer upload da imagem para GCS
 const processProfileImage = async (req, res, next) => {
   if (!req.file) {
     return next();
@@ -65,29 +68,34 @@ const processProfileImage = async (req, res, next) => {
   try {
     console.log(`📤 Processando upload de imagem para usuário: ${req.user.id}`);
 
-    // INVALIDAR CACHES DA IMAGEM ANTIGA ANTES DE PROCESSAR
+    // INVALIDAR E DELETAR IMAGEM ANTIGA DO GCS
     if (req.user.profileImage) {
       const oldImagePath = `/uploads/profiles/${req.user.profileImage}`;
 
       // Invalidar cache em memória
       serverCache.invalidate(oldImagePath);
 
-      // Invalidar cache HTTP
+      // Invalidar cache HTTP (se houver cópia local)
       invalidateHttpCache(req.user.profileImage);
 
+      // 🆕 DELETAR DO GCS
+      await gcsService.deleteImage(req.user.profileImage);
+
       console.log(
-        `🔄 Caches invalidados para imagem antiga: ${req.user.profileImage}`
+        `🔄 Caches invalidados e arquivo deletado do GCS: ${req.user.profileImage}`
       );
 
-      // Remover arquivo físico antigo
+      // Remover arquivo físico local antigo (se existir como backup)
       const oldFilePath = path.join(uploadsDir, req.user.profileImage);
       if (fs.existsSync(oldFilePath)) {
         try {
           await fs.promises.unlink(oldFilePath);
-          console.log(`🗑️  Arquivo antigo removido: ${req.user.profileImage}`);
+          console.log(
+            `🗑️  Arquivo local antigo removido: ${req.user.profileImage}`
+          );
         } catch (unlinkError) {
           console.error(
-            `⚠️  Erro ao remover arquivo antigo: ${unlinkError.message}`
+            `⚠️  Erro ao remover arquivo local antigo: ${unlinkError.message}`
           );
         }
       }
@@ -96,54 +104,77 @@ const processProfileImage = async (req, res, next) => {
     // Gerar nome único para o arquivo
     const timestamp = Date.now();
     const filename = `profile-${req.user.id}-${timestamp}.webp`;
-    const filepath = path.join(uploadsDir, filename);
 
     console.log(`🔄 Gerando nova imagem: ${filename}`);
 
-    // Processar imagem com sharp
-    const imageBuffer = await sharp(req.file.buffer)
-      .resize(300, 300, {
-        fit: "cover",
-        position: "center",
-      })
-      .webp({
-        quality: 85,
-        effort: 4, // Melhor compressão
-      })
-      .toBuffer();
+    // 🆕 FAZER UPLOAD DIRETAMENTE PARA O GCS
+    const uploadResult = await gcsService.uploadImage(
+      req.file.buffer,
+      filename,
+      "image/webp"
+    );
 
-    // Salvar arquivo processado
-    await fs.promises.writeFile(filepath, imageBuffer);
-
-    // Verificar se o arquivo foi criado com sucesso
-    const stats = await fs.promises.stat(filepath);
-
-    if (!stats.isFile()) {
-      throw new Error("Falha ao criar arquivo de imagem");
+    if (!uploadResult.success) {
+      throw new Error("Falha no upload para GCS");
     }
 
-    // PRÉ-CARREGAR A NOVA IMAGEM NO CACHE EM MEMÓRIA
-    const newImagePath = `/uploads/profiles/${filename}`;
-    serverCache.set(newImagePath, imageBuffer, "image/webp", stats.size);
+    console.log(`✅ Upload para GCS bem-sucedido: ${uploadResult.url}`);
+
+    // 🆕 OPCIONAL: Salvar cópia local como backup
+    const saveLocalBackup = process.env.SAVE_LOCAL_BACKUP === "true";
+    if (saveLocalBackup) {
+      try {
+        const filepath = path.join(uploadsDir, filename);
+        const processedBuffer = await sharp(req.file.buffer)
+          .resize(300, 300, {
+            fit: "cover",
+            position: "center",
+          })
+          .webp({
+            quality: 85,
+            effort: 4,
+          })
+          .toBuffer();
+
+        await fs.promises.writeFile(filepath, processedBuffer);
+        console.log(`💾 Backup local salvo: ${filename}`);
+      } catch (backupError) {
+        console.error("⚠️  Erro ao salvar backup local:", backupError.message);
+        // Não interrompe o fluxo se backup falhar
+      }
+    }
+
+    // PRÉ-CARREGAR A NOVA IMAGEM NO CACHE EM MEMÓRIA (para requisições futuras)
+    // Nota: A URL agora é do GCS, não local
+    const newImagePath = uploadResult.url;
+    serverCache.set(
+      newImagePath,
+      req.file.buffer,
+      "image/webp",
+      uploadResult.size
+    );
     console.log(`💾 Nova imagem pré-carregada no cache: ${filename}`);
 
     // Adicionar informações da imagem ao req
     req.processedImage = {
       filename: filename,
-      path: `/uploads/profiles/${filename}`,
-      fullPath: filepath,
-      size: stats.size,
+      path: uploadResult.url, // 🆕 URL do GCS, não caminho local
+      fullPath: uploadResult.path, // Path no bucket GCS
+      publicUrl: uploadResult.url, // 🆕 URL pública do GCS
+      size: uploadResult.size,
       originalName: req.file.originalname,
       originalSize: req.file.size,
       mimetype: "image/webp",
       processedAt: new Date(),
       cached: true,
-      mtime: stats.mtime,
+      bucket: uploadResult.bucket,
+      storage: "gcs", // 🆕 Indicador de storage usado
     };
 
     console.log(
-      `✅ Imagem processada com sucesso: ${filename} (${stats.size} bytes)`
+      `✅ Imagem processada e enviada para GCS: ${filename} (${uploadResult.size} bytes)`
     );
+    console.log(`🌐 URL pública: ${uploadResult.url}`);
 
     next();
   } catch (error) {
@@ -154,13 +185,13 @@ const processProfileImage = async (req, res, next) => {
       serverCache.invalidate(req.processedImage.path);
     }
 
-    // Tentar limpar arquivo parcialmente criado
-    if (req.processedImage && req.processedImage.fullPath) {
+    // 🆕 Tentar deletar do GCS se foi parcialmente enviado
+    if (req.processedImage && req.processedImage.filename) {
       try {
-        await fs.promises.unlink(req.processedImage.fullPath);
-        console.log(`🧹 Arquivo parcial removido após erro`);
+        await gcsService.deleteImage(req.processedImage.filename);
+        console.log(`🧹 Arquivo parcial removido do GCS após erro`);
       } catch (cleanupError) {
-        console.error("Erro ao limpar arquivo:", cleanupError);
+        console.error("Erro ao limpar arquivo do GCS:", cleanupError);
       }
     }
 
@@ -169,12 +200,15 @@ const processProfileImage = async (req, res, next) => {
 
     if (error.message.includes("Input file")) {
       errorMessage = "Arquivo de imagem inválido ou corrompido";
-    } else if (error.message.includes("ENOSPC")) {
-      errorMessage = "Espaço em disco insuficiente";
-    } else if (error.message.includes("EACCES")) {
-      errorMessage = "Permissão negada para salvar arquivo";
+    } else if (
+      error.message.includes("GCS") ||
+      error.message.includes("Google Cloud")
+    ) {
+      errorMessage = "Erro ao fazer upload para o servidor de armazenamento";
     } else if (error.message.includes("Input buffer")) {
       errorMessage = "Formato de imagem não suportado";
+    } else if (error.message.includes("Network")) {
+      errorMessage = "Erro de conexão com o servidor de armazenamento";
     }
 
     const err = new Error(errorMessage);
@@ -242,7 +276,7 @@ const validateImageDimensions = async (req, res, next) => {
   }
 };
 
-// Middleware para limpeza de imagens antigas (opcional)
+// Middleware para limpeza de imagens antigas no GCS (opcional)
 const cleanupOldImages = async (req, res, next) => {
   try {
     // Executar limpeza apenas ocasionalmente (1% de chance)
@@ -250,31 +284,43 @@ const cleanupOldImages = async (req, res, next) => {
       return next();
     }
 
-    console.log(`🧹 Executando limpeza de imagens antigas...`);
+    console.log(`🧹 Executando limpeza de imagens antigas no GCS...`);
 
-    const files = await fs.promises.readdir(uploadsDir);
-    const now = Date.now();
-    const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 dias
-    let removed = 0;
-
-    for (const file of files) {
-      if (!file.startsWith("profile-")) continue;
-
-      const filePath = path.join(uploadsDir, file);
-      const stats = await fs.promises.stat(filePath);
-
-      // Remove arquivos muito antigos
-      if (now - stats.mtime.getTime() > maxAge) {
-        await fs.promises.unlink(filePath);
-        serverCache.invalidate(`/uploads/profiles/${file}`);
-        removed++;
-      }
-    }
+    // 🆕 Usar serviço GCS para limpeza
+    const removed = await gcsService.cleanupOldImages(30);
 
     if (removed > 0) {
       console.log(
-        `🗑️  Limpeza concluída: ${removed} arquivos antigos removidos`
+        `🗑️  Limpeza GCS concluída: ${removed} arquivos antigos removidos`
       );
+    }
+
+    // Também limpar arquivos locais antigos (backup)
+    const saveLocalBackup = process.env.SAVE_LOCAL_BACKUP === "true";
+    if (saveLocalBackup && fs.existsSync(uploadsDir)) {
+      const files = await fs.promises.readdir(uploadsDir);
+      const now = Date.now();
+      const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 dias
+      let localRemoved = 0;
+
+      for (const file of files) {
+        if (!file.startsWith("profile-")) continue;
+
+        const filePath = path.join(uploadsDir, file);
+        const stats = await fs.promises.stat(filePath);
+
+        if (now - stats.mtime.getTime() > maxAge) {
+          await fs.promises.unlink(filePath);
+          serverCache.invalidate(`/uploads/profiles/${file}`);
+          localRemoved++;
+        }
+      }
+
+      if (localRemoved > 0) {
+        console.log(
+          `🗑️  Limpeza local concluída: ${localRemoved} backups antigos removidos`
+        );
+      }
     }
   } catch (error) {
     console.error("⚠️  Erro na limpeza de arquivos antigos:", error);
@@ -298,19 +344,41 @@ const invalidateUserCache = (userId) => {
 };
 
 // Função para verificar saúde do sistema de upload
-const getUploadHealth = () => {
+const getUploadHealth = async () => {
   try {
+    // Verificar saúde do GCS
+    const gcsHealth = await gcsService.checkHealth();
+
+    // Verificar diretório local
     const dirExists = fs.existsSync(uploadsDir);
-    const stats = fs.statSync(uploadsDir);
-    const files = fs.readdirSync(uploadsDir);
-    const profileFiles = files.filter((f) => f.startsWith("profile-"));
+    let localStats = null;
+
+    if (dirExists) {
+      const stats = fs.statSync(uploadsDir);
+      const files = fs.readdirSync(uploadsDir);
+      const profileFiles = files.filter((f) => f.startsWith("profile-"));
+
+      localStats = {
+        directory: uploadsDir,
+        totalFiles: files.length,
+        profileImages: profileFiles.length,
+      };
+    }
 
     return {
-      healthy: dirExists && stats.isDirectory(),
-      directory: uploadsDir,
-      totalFiles: files.length,
-      profileImages: profileFiles.length,
-      diskSpace: "N/A",
+      healthy: gcsHealth.healthy,
+      storage: {
+        primary: {
+          type: "Google Cloud Storage",
+          ...gcsHealth,
+        },
+        backup: {
+          type: "Local Filesystem",
+          enabled: process.env.SAVE_LOCAL_BACKUP === "true",
+          healthy: dirExists,
+          ...localStats,
+        },
+      },
       cacheStats: serverCache.getStats(),
     };
   } catch (error) {
