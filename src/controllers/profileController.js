@@ -518,87 +518,87 @@ const profileController = {
   },
 
   // 🆕 NOVO MÉTODO: Forçar sincronização da foto do banco
-  async syncPhoto(req, res) {
-    try {
-      const userId = req.user.id;
-      const user = await User.findById(userId);
+  // async syncPhoto(req, res) {
+  //   try {
+  //     const userId = req.user.id;
+  //     const user = await User.findById(userId);
 
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "Usuário não encontrado",
-        });
-      }
+  //     if (!user) {
+  //       return res.status(404).json({
+  //         success: false,
+  //         message: "Usuário não encontrado",
+  //       });
+  //     }
 
-      console.log("🔄 Forçando sincronização de foto:", {
-        userId: user._id,
-        email: user.email,
-        hasPhoto: !!user.profilePhoto?.filename,
-      });
+  //     console.log("🔄 Forçando sincronização de foto:", {
+  //       userId: user._id,
+  //       email: user.email,
+  //       hasPhoto: !!user.profilePhoto?.filename,
+  //     });
 
-      // Se tem foto no banco, verificar se existe no GCS
-      if (user.profilePhoto && user.profilePhoto.storage === "gcs") {
-        const { filename, bucket } = user.profilePhoto;
+  //     // Se tem foto no banco, verificar se existe no GCS
+  //     if (user.profilePhoto && user.profilePhoto.storage === "gcs") {
+  //       const { filename, bucket } = user.profilePhoto;
 
-        // Verificar se arquivo existe no GCS
-        const exists = await gcsService.fileExists(filename);
+  //       // Verificar se arquivo existe no GCS
+  //       const exists = await gcsService.fileExists(filename);
 
-        if (exists) {
-          // Reconstruir URL correta
-          const bucketName = bucket || "altrum_coins";
-          const correctUrl = `https://storage.googleapis.com/${bucketName}/profiles/${filename}`;
+  //       if (exists) {
+  //         // Reconstruir URL correta
+  //         const bucketName = bucket || "altrum_coins";
+  //         const correctUrl = `https://storage.googleapis.com/${bucketName}/profiles/${filename}`;
 
-          // Atualizar se necessário
-          if (user.profilePhoto.path !== correctUrl) {
-            user.profilePhoto.path = correctUrl;
-            await user.save();
-            console.log(`✅ URL corrigida: ${correctUrl}`);
-          } else {
-            console.log("✅ URL já está correta");
-          }
+  //         // Atualizar se necessário
+  //         if (user.profilePhoto.path !== correctUrl) {
+  //           user.profilePhoto.path = correctUrl;
+  //           await user.save();
+  //           console.log(`✅ URL corrigida: ${correctUrl}`);
+  //         } else {
+  //           console.log("✅ URL já está correta");
+  //         }
 
-          return res.json({
-            success: true,
-            message: "Foto sincronizada com sucesso",
-            photoUrl: correctUrl,
-          });
-        } else {
-          // Arquivo não existe no GCS, limpar dados
-          console.log(`⚠️  Arquivo não existe no GCS, limpando dados`);
+  //         return res.json({
+  //           success: true,
+  //           message: "Foto sincronizada com sucesso",
+  //           photoUrl: correctUrl,
+  //         });
+  //       } else {
+  //         // Arquivo não existe no GCS, limpar dados
+  //         console.log(`⚠️  Arquivo não existe no GCS, limpando dados`);
 
-          user.profilePhoto = {
-            filename: null,
-            path: null,
-            uploadDate: null,
-            storage: null,
-            bucket: null,
-          };
+  //         user.profilePhoto = {
+  //           filename: null,
+  //           path: null,
+  //           uploadDate: null,
+  //           storage: null,
+  //           bucket: null,
+  //         };
 
-          await user.save();
+  //         await user.save();
 
-          return res.json({
-            success: true,
-            message: "Dados de foto órfãos removidos",
-            photoUrl: null,
-          });
-        }
-      } else {
-        return res.json({
-          success: true,
-          message: "Usuário não possui foto",
-          photoUrl: null,
-        });
-      }
-    } catch (error) {
-      console.error("❌ Erro ao sincronizar foto:", error);
-      res.status(500).json({
-        success: false,
-        message: "Erro ao sincronizar foto",
-        error:
-          process.env.NODE_ENV === "development" ? error.message : undefined,
-      });
-    }
-  },
+  //         return res.json({
+  //           success: true,
+  //           message: "Dados de foto órfãos removidos",
+  //           photoUrl: null,
+  //         });
+  //       }
+  //     } else {
+  //       return res.json({
+  //         success: true,
+  //         message: "Usuário não possui foto",
+  //         photoUrl: null,
+  //       });
+  //     }
+  //   } catch (error) {
+  //     console.error("❌ Erro ao sincronizar foto:", error);
+  //     res.status(500).json({
+  //       success: false,
+  //       message: "Erro ao sincronizar foto",
+  //       error:
+  //         process.env.NODE_ENV === "development" ? error.message : undefined,
+  //     });
+  //   }
+  // },
 };
 
 module.exports = profileController;
