@@ -135,12 +135,17 @@ const profileController = {
       res.json({
         success: true,
         message: "Perfil atualizado com sucesso!",
-        user: updatedUser,
-        profilePhoto: req.processedImage // Verifica se a imagem foi processada
+        user: {
+          ...updatedUser,
+          // 🔧 garante que o frontend receba a URL pública
+          profilePhotoUrl: req.processedImage
+            ? req.processedImage.publicUrl
+            : user.profilePhoto?.path || updatedUser.profilePhotoUrl,
+        },
+        profilePhoto: req.processedImage
           ? {
-              // ✅ CORRIGIDO: Usa a URL do GCS que o middleware anexou à requisição
-              url: req.processedImage.url, // <--- USAR A NOVA URL AQUI
-              filename: req.processedImage.filename, // Usar o novo nome do arquivo, se estiver disponível
+              url: req.processedImage.publicUrl, // ✅ URL pública correta do GCS
+              filename: req.processedImage.filename,
               storage: "gcs",
             }
           : undefined,
@@ -227,16 +232,16 @@ const profileController = {
         success: true,
         message: "Foto de perfil atualizada com sucesso!",
         profilePhoto: {
-          url: user.profilePhotoUrl, // URL do GCS
+          url: user.profilePhoto.path, // ✅ URL pública do GCS
           filename: user.profilePhoto.filename,
-          storage: "gcs", // 🆕 Indicador
+          storage: "gcs",
         },
         user: {
           id: user._id,
           name: user.name,
           email: user.email,
           phone: user.phone,
-          profilePhotoUrl: user.profilePhotoUrl, // URL do GCS
+          profilePhotoUrl: user.profilePhoto.path, // ✅ URL pública do GCS
         },
       });
     } catch (error) {
