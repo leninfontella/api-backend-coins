@@ -322,7 +322,7 @@ userSchema.virtual("profilePhotoUrl").get(function () {
   if (this.profilePhoto && this.profilePhoto.path) {
     // Se for GCS, retorna a URL diretamente (já é pública)
     if (this.profilePhoto.storage === "gcs") {
-      return this.profilePhoto.path;
+      return this.profilePhoto.path; // ✅ URL completa do GCS
     }
 
     // Se for local, constrói a URL relativa
@@ -333,7 +333,8 @@ userSchema.virtual("profilePhotoUrl").get(function () {
     return `/uploads/profiles/${this.profilePhoto.filename}`;
   }
 
-  // 🔧 CORREÇÃO: Retornar NULL em vez de avatar
+  // 🔧 CORREÇÃO CRÍTICA: Retornar NULL em vez de avatar
+  // O avatar deve ser usado apenas no frontend como fallback
   return null;
 });
 
@@ -353,20 +354,20 @@ userSchema.virtual("nextLevelXp").get(function () {
 
 // ========== MIDDLEWARE ==========
 userSchema.pre("save", function (next) {
-  // 🔧 CORREÇÃO: Não validar arquivos do GCS no sistema de arquivos local
+  // 🔧 CORREÇÃO CRÍTICA: Não validar arquivos do GCS no sistema de arquivos local
   if (this.profilePhoto && this.profilePhoto.filename) {
     // Se a foto está no GCS, NÃO verificar localmente
     if (this.profilePhoto.storage === "gcs") {
       console.log(
         `✅ Foto no GCS, pulando validação local: ${this.profilePhoto.filename}`
       );
-      return next();
+      return next(); // ✅ Pular validação para GCS
     }
 
     // Apenas para arquivos locais, verificar existência
     if (!this.profilePhotoExists()) {
       console.log(
-        `⚠️ Foto local ${this.profilePhoto.filename} não encontrada, limpando dados`
+        `⚠️  Foto local ${this.profilePhoto.filename} não encontrada, limpando dados`
       );
       this.profilePhoto = {
         filename: null,
@@ -562,9 +563,9 @@ userSchema.methods.profilePhotoExists = function () {
     return false;
   }
 
-  // 🔧 NOVO: Se estiver no GCS, assumir que existe (não validar localmente)
+  // 🔧 CRÍTICO: Se estiver no GCS, assumir que existe (não validar localmente)
   if (this.profilePhoto.storage === "gcs") {
-    return true; // GCS tem sua própria validação
+    return true; // ✅ GCS tem sua própria validação
   }
 
   // Validar apenas arquivos locais
@@ -804,10 +805,11 @@ userSchema.methods.getPublicData = function () {
     name: this.name,
     username: this.username,
     email: this.email,
-    avatar: this.avatar, // Emoji para fallback no frontend
-    profilePhotoUrl: this.profilePhotoUrl, // NULL ou URL válida do GCS
+    avatar: this.avatar, // 👤 Emoji para fallback no frontend
+    profilePhotoUrl: this.profilePhotoUrl, // ✅ NULL ou URL válida do GCS
     institution: this.institution,
     coins: this.coins,
+    balance: this.coins, // Alias
     level: this.level,
     xp: this.xp,
     maxXp: this.maxXp,
@@ -820,7 +822,6 @@ userSchema.methods.getPublicData = function () {
     updatedAt: this.updatedAt,
   };
 };
-
 // ========== MÉTODOS ESTÁTICOS ==========
 
 // Ranking de usuários

@@ -27,6 +27,7 @@ const profileController = {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        hasPhoto: !!user.profilePhoto?.filename,
       });
 
       // 🔧 VALIDAÇÃO CRÍTICA: Verificar se o email pertence ao usuário atual
@@ -63,6 +64,12 @@ const profileController = {
           storage: "gcs", // 🆕 Indicador de storage
           bucket: req.processedImage.bucket, // 🆕 Nome do bucket
         };
+
+        console.log("📸 Nova foto definida:", {
+          filename: user.profilePhoto.filename,
+          path: user.profilePhoto.path,
+          storage: user.profilePhoto.storage,
+        });
       }
 
       // 🔧 CORREÇÃO CRÍTICA: Atualizar campos individualmente
@@ -99,20 +106,21 @@ const profileController = {
         await user.save();
         console.log("💾 Usuário salvo no banco de dados");
       } else {
-        console.log("⚠️ Nenhuma mudança detectada, não salvando");
+        console.log("⚠️  Nenhuma mudança detectada, não salvando");
       }
 
-      // Preparar dados atualizados do usuário para resposta
+      // 🔧 CORREÇÃO: Preparar dados atualizados COMPLETOS do usuário para resposta
       const updatedUser = {
         id: user._id,
         name: user.name,
-        fullName: user.fullName,
+        fullName: user.fullName || user.name,
         email: user.email,
-        phone: user.phone,
-        profilePhotoUrl: user.profilePhotoUrl, // 🆕 Agora retorna URL do GCS
+        phone: user.phone || "",
+        profilePhotoUrl: user.profilePhotoUrl, // 🆕 Virtual que retorna URL do GCS
         avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
+        balance: user.coins, // Alias
         level: user.level,
         xp: user.xp,
         maxXp: user.maxXp,
@@ -121,6 +129,8 @@ const profileController = {
         totalReceived: user.totalReceived,
         totalDonations: user.totalDonations,
         stats: user.stats,
+        preferences: user.preferences,
+        settings: user.settings,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       };
@@ -130,6 +140,7 @@ const profileController = {
         email: updatedUser.email,
         phone: updatedUser.phone,
         profilePhotoUrl: updatedUser.profilePhotoUrl,
+        hasPhoto: !!updatedUser.profilePhotoUrl,
       });
 
       res.json({
@@ -137,10 +148,10 @@ const profileController = {
         message: "Perfil atualizado com sucesso!",
         user: {
           ...updatedUser,
-          // 🔧 garante que o frontend receba a URL pública
+          // 🔧 CRÍTICO: Garantir que o frontend receba a URL pública correta
           profilePhotoUrl: req.processedImage
             ? req.processedImage.publicUrl
-            : user.profilePhoto?.path || updatedUser.profilePhotoUrl,
+            : user.profilePhotoUrl, // 🔧 Usar virtual do modelo
         },
         profilePhoto: req.processedImage
           ? {
@@ -183,13 +194,14 @@ const profileController = {
     }
   },
 
-  // 🔧 NOVO MÉTODO: Upload apenas da foto (sem outros dados)
+  // 🔧 MÉTODO: Upload apenas da foto (sem outros dados)
   async uploadProfilePhoto(req, res) {
     try {
       const userId = req.user.id;
       const user = await User.findById(userId);
 
       if (!user) {
+        // 🔧 Limpar imagem do GCS se usuário não existe
         if (req.processedImage && req.processedImage.filename) {
           await gcsService.deleteImage(req.processedImage.filename);
           console.log("🧹 Imagem removida do GCS (usuário não encontrado)");
@@ -208,15 +220,22 @@ const profileController = {
         });
       }
 
-      // Remover foto antiga do GCS
+      console.log("📸 Processando upload de foto para:", {
+        userId: user._id,
+        email: user.email,
+        oldPhoto: user.profilePhoto?.filename,
+        newPhoto: req.processedImage.filename,
+      });
+
+      // 🔧 Remover foto antiga do GCS
       if (user.profilePhoto && user.profilePhoto.filename) {
         await gcsService.deleteImage(user.profilePhoto.filename);
         console.log(
-          `🗑️ Foto antiga removida do GCS: ${user.profilePhoto.filename}`
+          `🗑️  Foto antiga removida do GCS: ${user.profilePhoto.filename}`
         );
       }
 
-      // 🔧 CORREÇÃO: Salvar nova foto ANTES de save()
+      // 🔧 CRÍTICO: Salvar nova foto ANTES de save()
       user.profilePhoto = {
         filename: req.processedImage.filename,
         path: req.processedImage.publicUrl, // URL pública do GCS
@@ -229,13 +248,44 @@ const profileController = {
         filename: user.profilePhoto.filename,
         path: user.profilePhoto.path,
         storage: user.profilePhoto.storage,
+        bucket: user.profilePhoto.bucket,
       });
 
       await user.save();
 
       console.log("✅ Foto salva no banco com sucesso!");
 
-      // 🔧 CORREÇÃO: Retornar APENAS dados válidos
+      // 🔧 CRÍTICO: Preparar dados completos do usuário
+      const userData = {
+        id: user._id,
+        name: user.name,
+        fullName: user.fullName || user.name,
+        email: user.email,
+        phone: user.phone || "",
+        profilePhotoUrl: user.profilePhoto.path, // 🔧 URL direta do GCS
+        avatar: user.avatar, // Emoji para fallback
+        institution: user.institution,
+        coins: user.coins,
+        balance: user.coins,
+        level: user.level,
+        xp: user.xp,
+        maxXp: user.maxXp,
+        score: user.score,
+        totalDonated: user.totalDonated,
+        totalReceived: user.totalReceived,
+        totalDonations: user.totalDonations,
+        stats: user.stats,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+
+      console.log("📤 Resposta enviada:", {
+        hasPhoto: !!userData.profilePhotoUrl,
+        photoUrl: userData.profilePhotoUrl,
+        photoStorage: "gcs",
+      });
+
+      // 🔧 CORREÇÃO: Retornar dados completos do usuário
       res.status(200).json({
         success: true,
         message: "Foto de perfil atualizada com sucesso!",
@@ -243,19 +293,14 @@ const profileController = {
           url: user.profilePhoto.path, // URL do GCS
           filename: user.profilePhoto.filename,
           storage: "gcs",
+          bucket: user.profilePhoto.bucket,
         },
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          profilePhotoUrl: user.profilePhoto.path, // 🔧 URL direta do GCS
-          avatar: user.avatar, // Emoji para fallback
-        },
+        user: userData, // 🔧 Dados COMPLETOS do usuário
       });
     } catch (error) {
       console.error("❌ Erro no upload da foto:", error);
 
+      // 🔧 Limpar imagem do GCS em caso de erro
       if (req.processedImage && req.processedImage.filename) {
         try {
           await gcsService.deleteImage(req.processedImage.filename);
@@ -287,10 +332,16 @@ const profileController = {
         });
       }
 
+      console.log("🗑️  Removendo foto de perfil:", {
+        userId: user._id,
+        email: user.email,
+        currentPhoto: user.profilePhoto?.filename,
+      });
+
       // 🆕 Remover arquivo do GCS
       if (user.profilePhoto && user.profilePhoto.filename) {
         await gcsService.deleteImage(user.profilePhoto.filename);
-        console.log(`🗑️  Foto removida do GCS: ${user.profilePhoto.filename}`);
+        console.log(`✅ Foto removida do GCS: ${user.profilePhoto.filename}`);
       }
 
       // Limpar dados no banco
@@ -304,19 +355,39 @@ const profileController = {
 
       await user.save();
 
+      console.log("✅ Dados de foto limpos do banco");
+
+      // 🔧 CORREÇÃO: Retornar dados completos do usuário
+      const userData = {
+        id: user._id,
+        name: user.name,
+        fullName: user.fullName || user.name,
+        email: user.email,
+        phone: user.phone || "",
+        profilePhotoUrl: null, // 🔧 Agora é null
+        avatar: user.avatar,
+        institution: user.institution,
+        coins: user.coins,
+        balance: user.coins,
+        level: user.level,
+        xp: user.xp,
+        maxXp: user.maxXp,
+        score: user.score,
+        totalDonated: user.totalDonated,
+        totalReceived: user.totalReceived,
+        totalDonations: user.totalDonations,
+        stats: user.stats,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+
       res.json({
         success: true,
         message: "Foto de perfil removida com sucesso",
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          profilePhotoUrl: null,
-        },
+        user: userData, // 🔧 Dados COMPLETOS
       });
     } catch (error) {
-      console.error("Erro ao remover foto de perfil:", error);
+      console.error("❌ Erro ao remover foto de perfil:", error);
       res.status(500).json({
         success: false,
         message: "Erro interno do servidor",
@@ -341,16 +412,18 @@ const profileController = {
         });
       }
 
+      // 🔧 CORREÇÃO: Preparar dados COMPLETOS do usuário
       const userData = {
         id: user._id,
         name: user.name,
-        fullName: user.fullName,
+        fullName: user.fullName || user.name,
         email: user.email,
-        phone: user.phone,
-        profilePhotoUrl: user.profilePhotoUrl, // NULL ou URL do GCS
+        phone: user.phone || "",
+        profilePhotoUrl: user.profilePhotoUrl, // 🔧 Virtual que retorna URL do GCS ou null
         avatar: user.avatar, // Emoji para fallback
         institution: user.institution,
         coins: user.coins,
+        balance: user.coins, // Alias
         level: user.level,
         xp: user.xp,
         maxXp: user.maxXp,
@@ -366,15 +439,20 @@ const profileController = {
       };
 
       console.log("📤 GET Profile - Dados enviados:", {
+        userId: userData.id,
+        email: userData.email,
         phone: userData.phone,
         profilePhotoUrl: userData.profilePhotoUrl,
         hasPhoto: !!userData.profilePhotoUrl,
         photoStorage: user.profilePhoto?.storage,
+        photoFilename: user.profilePhoto?.filename,
       });
 
       res.json({
         success: true,
-        user: userData,
+        data: {
+          user: userData, // 🔧 Envolver em 'data' para consistência
+        },
       });
     } catch (error) {
       console.error("❌ Erro ao obter perfil:", error);
@@ -387,7 +465,7 @@ const profileController = {
     }
   },
 
-  // 🆕 NOVO MÉTODO: Verificar saúde do sistema de storage
+  // 🆕 MÉTODO: Verificar saúde do sistema de storage
   async getStorageHealth(req, res) {
     try {
       const health = await gcsService.checkHealth();
@@ -400,7 +478,7 @@ const profileController = {
         },
       });
     } catch (error) {
-      console.error("Erro ao verificar saúde do storage:", error);
+      console.error("❌ Erro ao verificar saúde do storage:", error);
       res.status(500).json({
         success: false,
         message: "Erro ao verificar saúde do storage",
@@ -410,10 +488,10 @@ const profileController = {
     }
   },
 
-  // 🆕 NOVO MÉTODO: Listar imagens de perfil (admin/debug)
+  // 🆕 MÉTODO: Listar imagens de perfil (admin/debug)
   async listProfileImages(req, res) {
     try {
-      // Verificar se usuário é admin (adicione sua lógica de autorização)
+      // 🔧 Verificar se usuário é admin (descomente e adicione sua lógica)
       // if (!req.user.isAdmin) {
       //   return res.status(403).json({
       //     success: false,
@@ -429,10 +507,93 @@ const profileController = {
         images: images,
       });
     } catch (error) {
-      console.error("Erro ao listar imagens:", error);
+      console.error("❌ Erro ao listar imagens:", error);
       res.status(500).json({
         success: false,
         message: "Erro ao listar imagens",
+        error:
+          process.env.NODE_ENV === "development" ? error.message : undefined,
+      });
+    }
+  },
+
+  // 🆕 NOVO MÉTODO: Forçar sincronização da foto do banco
+  async syncPhoto(req, res) {
+    try {
+      const userId = req.user.id;
+      const user = await User.findById(userId);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "Usuário não encontrado",
+        });
+      }
+
+      console.log("🔄 Forçando sincronização de foto:", {
+        userId: user._id,
+        email: user.email,
+        hasPhoto: !!user.profilePhoto?.filename,
+      });
+
+      // Se tem foto no banco, verificar se existe no GCS
+      if (user.profilePhoto && user.profilePhoto.storage === "gcs") {
+        const { filename, bucket } = user.profilePhoto;
+
+        // Verificar se arquivo existe no GCS
+        const exists = await gcsService.fileExists(filename);
+
+        if (exists) {
+          // Reconstruir URL correta
+          const bucketName = bucket || "altrum_coins";
+          const correctUrl = `https://storage.googleapis.com/${bucketName}/profiles/${filename}`;
+
+          // Atualizar se necessário
+          if (user.profilePhoto.path !== correctUrl) {
+            user.profilePhoto.path = correctUrl;
+            await user.save();
+            console.log(`✅ URL corrigida: ${correctUrl}`);
+          } else {
+            console.log("✅ URL já está correta");
+          }
+
+          return res.json({
+            success: true,
+            message: "Foto sincronizada com sucesso",
+            photoUrl: correctUrl,
+          });
+        } else {
+          // Arquivo não existe no GCS, limpar dados
+          console.log(`⚠️  Arquivo não existe no GCS, limpando dados`);
+
+          user.profilePhoto = {
+            filename: null,
+            path: null,
+            uploadDate: null,
+            storage: null,
+            bucket: null,
+          };
+
+          await user.save();
+
+          return res.json({
+            success: true,
+            message: "Dados de foto órfãos removidos",
+            photoUrl: null,
+          });
+        }
+      } else {
+        return res.json({
+          success: true,
+          message: "Usuário não possui foto",
+          photoUrl: null,
+        });
+      }
+    } catch (error) {
+      console.error("❌ Erro ao sincronizar foto:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao sincronizar foto",
         error:
           process.env.NODE_ENV === "development" ? error.message : undefined,
       });

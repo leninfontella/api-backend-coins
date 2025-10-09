@@ -4,7 +4,384 @@ const Notification = require("../models/Notification");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
 
+const createAccessToken = (userId) => {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || "15m",
+  });
+};
+
+const createRefreshToken = (userId) => {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
+  });
+};
+
+exports.register = async (req, res, next) => {
+  const errors = validationResult(req);
+
+  //diagnóstico
+  console.log("📝 Dados recebidos no registro:", req.body);
+  console.log("⚠️ Erros de validação:", errors.array());
+
+  if (!errors.isEmpty())
+    return res.status(400).json({ errors: errors.array() });
+
+  const { name, email, phone, password } = req.body;
+  try {
+    const exists = await User.findOne({ email });
+    if (exists) return res.status(409).json({ message: "Email já cadastrado" });
+
+    const user = new User({ name, email, phone, password });
+    await user.save();
+
+    const accessToken = createAccessToken(user._id);
+    const refreshToken = createRefreshToken(user._id);
+
+    // Salvar refresh token no DB
+    const expiresAt = new Date(
+      Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
+    );
+    await Token.create({ user: user._id, token: refreshToken, expiresAt });
+
+    // Enviar cookie httpOnly com refresh token
+    res.cookie("refreshToken", refreshToken, cookieOptions(req));
+
+    // 🔧 CORREÇÃO: Preparar dados do usuário com foto SEMPRE (mesmo null para novos)
+    const userData = {
+      id: user._id,
+      name: user.name,
+      fullName: user.fullName || user.name,
+      email: user.email,
+      phone: user.phone || "",
+      avatar: user.avatar,
+      institution: user.institution,
+      coins: user.coins,
+      balance: user.coins,
+      level: user.level,
+      xp: user.xp,
+      maxXp: user.maxXp,
+      score: user.score,
+      totalDonated: user.totalDonated,
+      totalReceived: user.totalReceived,
+      totalDonations: user.totalDonations,
+      stats: user.stats,
+      preferences: user.preferences,
+      settings: user.settings,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      // 🔧 CRÍTICO: Sempre incluir foto (null para novos usuários)
+      profilePhotoUrl: user.profilePhotoUrl, // Virtual que retorna URL do GCS ou null
+      profilePhoto: user.profilePhoto, // Objeto completo para debug
+    };
+
+    console.log("✅ Registro bem-sucedido:", {
+      userId: user._id,
+      email: user.email,
+      hasPhoto: !!userData.profilePhotoUrl,
+      photoUrl: userData.profilePhotoUrl,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Usuário criado com sucesso!",
+      data: {
+        user: userData,
+        accessToken,
+        // Novo usuário não tem notificações pendentes
+        hasPendingNotifications: false,
+        pendingNotificationsCount: 0,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Erro no registro:", err);
+    if (err.code === 11000)
+      return res.status(409).json({ message: "Email já cadastrado" });
+    next(err);
+  }
+};
+
+exports.login = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty())
+    return res.status(400).json({ errors: errors.array() });
+
+  const { email, password } = req.body;
+  try {
+    const user = await User.findOne({ email }).select("+password");
+    if (!user)
+      return res.status(401).json({ message: "Credenciais inválidas" });
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch)
+      return res.status(401).json({ message: "Credenciais inválidas" });
+
+    const accessToken = createAccessToken(user._id);
+    const refreshToken = createRefreshToken(user._id);
+
+    // Salvar refresh token
+    const expiresAt = new Date(
+      Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
+    );
+    await Token.create({ user: user._id, token: refreshToken, expiresAt });
+
+    res.cookie("refreshToken", refreshToken, cookieOptions(req));
+
+    // 🔔 BUSCAR NOTIFICAÇÕES PENDENTES (não exibidas)
+    const pendingNotifications = await Notification.find({
+      user: user._id,
+      displayed: false,
+      status: "unread",
+    })
+      .sort({ createdAt: -1 })
+      .limit(10);
+
+    const hasPendingNotifications = pendingNotifications.length > 0;
+
+    // Opcional: Obter contagem total de não lidas
+    const unreadCount = await Notification.getUnreadCount(user._id);
+
+    // 🔧 CRÍTICO: Preparar dados do usuário com foto SEMPRE
+    const userData = {
+      id: user._id,
+      name: user.name,
+      fullName: user.fullName || user.name,
+      email: user.email,
+      phone: user.phone || "",
+      avatar: user.avatar,
+      institution: user.institution,
+      coins: user.coins,
+      balance: user.coins, // Alias
+      level: user.level,
+      xp: user.xp,
+      maxXp: user.maxXp,
+      score: user.score,
+      totalDonated: user.totalDonated,
+      totalReceived: user.totalReceived,
+      totalDonations: user.totalDonations,
+      stats: user.stats,
+      preferences: user.preferences,
+      settings: user.settings,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      // 🔧 CRÍTICO: Sempre incluir foto do banco
+      profilePhotoUrl: user.profilePhotoUrl, // Virtual que retorna URL do GCS ou null
+      profilePhoto: user.profilePhoto, // Objeto completo para debug
+    };
+
+    console.log("✅ Login bem-sucedido:", {
+      userId: user._id,
+      email: user.email,
+      hasPhoto: !!userData.profilePhotoUrl,
+      photoUrl: userData.profilePhotoUrl,
+      photoStorage: user.profilePhoto?.storage,
+      photoFilename: user.profilePhoto?.filename,
+    });
+
+    res.json({
+      success: true,
+      message: "Login realizado com sucesso!",
+      data: {
+        user: userData,
+        accessToken,
+        // 📬 Informações de notificações pendentes
+        hasPendingNotifications,
+        pendingNotificationsCount: pendingNotifications.length,
+        unreadNotificationsCount: unreadCount,
+        // Opcionalmente, enviar as notificações mais recentes
+        recentNotifications: pendingNotifications.slice(0, 5).map((n) => ({
+          id: n._id,
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          priority: n.priority,
+          createdAt: n.createdAt,
+          data: n.data,
+        })),
+      },
+    });
+  } catch (err) {
+    console.error("❌ Erro no login:", err);
+    next(err);
+  }
+};
+
+exports.refreshToken = async (req, res, next) => {
+  try {
+    const token = req.cookies.refreshToken;
+    if (!token) return res.status(401).json({ message: "Sem refresh token" });
+
+    // Verificar token assinado
+    let payload;
+    try {
+      payload = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ message: "Refresh token inválido" });
+    }
+
+    // Checar se token existe no DB
+    const stored = await Token.findOne({ user: payload.id, token });
+    if (!stored)
+      return res.status(401).json({ message: "Refresh token não reconhecido" });
+
+    // 🔧 NOVO: Buscar usuário para incluir foto na resposta
+    const user = await User.findById(payload.id);
+    if (!user) {
+      return res.status(401).json({ message: "Usuário não encontrado" });
+    }
+
+    // Gerar novos tokens
+    const accessToken = createAccessToken(payload.id);
+    const newRefreshToken = createRefreshToken(payload.id);
+
+    // Substituir token no DB (rotacionar)
+    stored.token = newRefreshToken;
+    stored.expiresAt = new Date(
+      Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
+    );
+    await stored.save();
+
+    res.cookie("refreshToken", newRefreshToken, cookieOptions(req));
+
+    // 🔔 Incluir informações de notificações no refresh
+    const unreadCount = await Notification.getUnreadCount(payload.id);
+    const hasPending = unreadCount > 0;
+
+    // 🔧 NOVO: Incluir dados do usuário com foto
+    const userData = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      profilePhotoUrl: user.profilePhotoUrl, // 🔧 CRÍTICO: Incluir foto
+      coins: user.coins,
+      level: user.level,
+    };
+
+    console.log("🔄 Refresh token bem-sucedido:", {
+      userId: user._id,
+      hasPhoto: !!userData.profilePhotoUrl,
+      photoUrl: userData.profilePhotoUrl,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        accessToken,
+        user: userData, // 🔧 NOVO: Incluir dados do usuário
+        hasPendingNotifications: hasPending,
+        unreadNotificationsCount: unreadCount,
+      },
+    });
+  } catch (err) {
+    console.error("❌ Erro no refresh token:", err);
+    next(err);
+  }
+};
+
+exports.logout = async (req, res, next) => {
+  try {
+    const token = req.cookies.refreshToken;
+    if (token) {
+      await Token.deleteOne({ token });
+      console.log("🚪 Logout: Refresh token removido do banco");
+    }
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: cookieSecure(),
+    });
+
+    console.log("✅ Logout realizado com sucesso");
+
+    res.json({ success: true, message: "Logout realizado com sucesso" });
+  } catch (err) {
+    console.error("❌ Erro no logout:", err);
+    next(err);
+  }
+};
+
+exports.me = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Usuário não encontrado" });
+    }
+
+    // 🔔 Incluir informações de notificações no endpoint /me
+    const unreadCount = await Notification.getUnreadCount(user._id);
+    const pendingNotifications = await Notification.find({
+      user: user._id,
+      displayed: false,
+      status: "unread",
+    })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    // 🔧 CORREÇÃO: Preparar dados do usuário com foto SEMPRE
+    const userData = {
+      id: user._id,
+      name: user.name,
+      fullName: user.fullName || user.name,
+      email: user.email,
+      phone: user.phone || "",
+      avatar: user.avatar,
+      institution: user.institution,
+      coins: user.coins,
+      balance: user.coins,
+      level: user.level,
+      xp: user.xp,
+      maxXp: user.maxXp,
+      score: user.score,
+      totalDonated: user.totalDonated,
+      totalReceived: user.totalReceived,
+      totalDonations: user.totalDonations,
+      stats: user.stats,
+      preferences: user.preferences,
+      settings: user.settings,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      // 🔧 CRÍTICO: Sempre incluir foto
+      profilePhotoUrl: user.profilePhotoUrl,
+      profilePhoto: user.profilePhoto,
+    };
+
+    console.log("👤 GET /me:", {
+      userId: user._id,
+      email: user.email,
+      hasPhoto: !!userData.profilePhotoUrl,
+      photoUrl: userData.profilePhotoUrl,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        user: userData,
+        // 📬 Informações de notificações
+        notifications: {
+          unreadCount,
+          hasPending: pendingNotifications.length > 0,
+          pendingCount: pendingNotifications.length,
+          recent: pendingNotifications.map((n) => ({
+            id: n._id,
+            type: n.type,
+            title: n.title,
+            message: n.message,
+            priority: n.priority,
+            createdAt: n.createdAt,
+          })),
+        },
+      },
+    });
+  } catch (err) {
+    console.error("❌ Erro no /me:", err);
+    next(err);
+  }
+};
+
 // --- Helpers ---
+
 function cookieOptions(req) {
   const secure = cookieSecure();
   return {
@@ -34,344 +411,3 @@ function msToMillis(str) {
     return 7 * 24 * 60 * 60 * 1000;
   }
 }
-
-const createAccessToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "15m",
-  });
-};
-
-const createRefreshToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
-  });
-};
-
-// ===========================================================
-// 📌 REGISTRO
-// ===========================================================
-exports.register = async (req, res, next) => {
-  const errors = validationResult(req);
-  console.log("Dados recebidos:", req.body);
-  console.log("Erros de validação:", errors.array());
-
-  if (!errors.isEmpty())
-    return res.status(400).json({ errors: errors.array() });
-
-  const { name, email, phone, password } = req.body;
-  try {
-    const exists = await User.findOne({ email });
-    if (exists) return res.status(409).json({ message: "Email já cadastrado" });
-
-    const user = new User({ name, email, phone, password });
-    await user.save();
-
-    const accessToken = createAccessToken(user._id);
-    const refreshToken = createRefreshToken(user._id);
-
-    const expiresAt = new Date(
-      Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
-    );
-    await Token.create({ user: user._id, token: refreshToken, expiresAt });
-
-    res.cookie("refreshToken", refreshToken, cookieOptions(req));
-
-    res.status(201).json({
-      success: true,
-      message: "Usuário criado com sucesso!",
-      data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-          coins: user.coins,
-          level: user.level,
-          totalDonated: user.totalDonated,
-          totalReceived: user.totalReceived,
-          profilePhotoUrl: user.profilePhotoUrl || null,
-          profilePhoto: user.profilePhoto || null,
-        },
-        accessToken,
-        hasPendingNotifications: false,
-        pendingNotificationsCount: 0,
-      },
-    });
-  } catch (err) {
-    if (err.code === 11000)
-      return res.status(409).json({ message: "Email já cadastrado" });
-    next(err);
-  }
-};
-
-// ===========================================================
-// 📌 LOGIN (corrigido)
-// ===========================================================
-exports.login = async (req, res, next) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty())
-      return res.status(400).json({ errors: errors.array() });
-
-    const { email, password } = req.body;
-
-    const user = await User.findOne({ email: email.toLowerCase() }).select(
-      "+password"
-    );
-    if (!user)
-      return res.status(401).json({ message: "Credenciais inválidas" });
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch)
-      return res.status(401).json({ message: "Credenciais inválidas" });
-
-    // Geração de tokens
-    const accessToken = createAccessToken(user._id);
-    const refreshToken = createRefreshToken(user._id);
-
-    const expiresAt = new Date(
-      Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
-    );
-    await Token.create({ user: user._id, token: refreshToken, expiresAt });
-
-    res.cookie("refreshToken", refreshToken, cookieOptions(req));
-
-    // Atualizações básicas de login
-    user.lastLogin = new Date();
-    user.loginCount = (user.loginCount || 0) + 1;
-    await user.save();
-
-    // 🔔 Buscar notificações pendentes
-    const pendingNotifications = await Notification.find({
-      user: user._id,
-      displayed: false,
-      status: "unread",
-    })
-      .sort({ createdAt: -1 })
-      .limit(10);
-
-    const unreadCount = await Notification.getUnreadCount(user._id);
-
-    // 🔧 Preparar dados completos do usuário
-    const userData = {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone || "",
-      coins: user.coins,
-      level: user.level,
-      xp: user.xp,
-      maxXp: user.maxXp,
-      score: user.score,
-      totalDonated: user.totalDonated,
-      totalReceived: user.totalReceived,
-      totalDonations: user.totalDonations,
-      preferences: user.preferences,
-      settings: user.settings,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-      // Foto de perfil
-      profilePhotoUrl: user.profilePhotoUrl || null,
-      profilePhoto: user.profilePhoto || null,
-    };
-
-    console.log("✅ Login bem-sucedido:", {
-      userId: user._id,
-      email: user.email,
-      hasPhoto: !!userData.profilePhotoUrl,
-      photoUrl: userData.profilePhotoUrl,
-      photoStorage: user.profilePhoto?.storage,
-      photoFilename: user.profilePhoto?.filename,
-    });
-
-    res.json({
-      success: true,
-      message: "Login realizado com sucesso!",
-      data: {
-        accessToken,
-        user: userData,
-        hasPendingNotifications: pendingNotifications.length > 0,
-        pendingNotificationsCount: pendingNotifications.length,
-        unreadNotificationsCount: unreadCount,
-        recentNotifications: pendingNotifications.slice(0, 5).map((n) => ({
-          id: n._id,
-          type: n.type,
-          title: n.title,
-          message: n.message,
-          priority: n.priority,
-          createdAt: n.createdAt,
-          data: n.data,
-        })),
-      },
-    });
-  } catch (err) {
-    console.error("❌ Erro no login:", err);
-    next(err);
-  }
-};
-
-// ===========================================================
-// 📌 REFRESH TOKEN (corrigido)
-// ===========================================================
-exports.refreshToken = async (req, res, next) => {
-  try {
-    const token = req.cookies.refreshToken;
-    if (!token) return res.status(401).json({ message: "Sem refresh token" });
-
-    let payload;
-    try {
-      payload = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (e) {
-      return res.status(401).json({ message: "Refresh token inválido" });
-    }
-
-    const stored = await Token.findOne({ user: payload.id, token });
-    if (!stored)
-      return res.status(401).json({ message: "Refresh token não reconhecido" });
-
-    const accessToken = createAccessToken(payload.id);
-    const newRefreshToken = createRefreshToken(payload.id);
-
-    stored.token = newRefreshToken;
-    stored.expiresAt = new Date(
-      Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
-    );
-    await stored.save();
-
-    res.cookie("refreshToken", newRefreshToken, cookieOptions(req));
-
-    // Buscar usuário atualizado
-    const user = await User.findById(payload.id);
-    if (!user) {
-      return res.status(404).json({ message: "Usuário não encontrado" });
-    }
-
-    // Contagem de notificações
-    const unreadCount = await Notification.getUnreadCount(payload.id);
-
-    // 🔧 Dados do usuário com foto incluída
-    const userData = {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      profilePhotoUrl: user.profilePhotoUrl || null,
-      profilePhoto: user.profilePhoto || null,
-      coins: user.coins,
-      level: user.level,
-      unreadNotificationsCount: unreadCount,
-    };
-
-    res.json({
-      success: true,
-      message: "Token renovado com sucesso",
-      data: {
-        accessToken,
-        user: userData,
-      },
-    });
-  } catch (err) {
-    console.error("❌ Erro no refresh token:", err);
-    next(err);
-  }
-};
-
-// ===========================================================
-// 📌 LOGOUT
-// ===========================================================
-exports.logout = async (req, res, next) => {
-  try {
-    const token = req.cookies.refreshToken;
-    if (token) await Token.deleteOne({ token });
-
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: cookieSecure(),
-    });
-    res.json({ success: true, message: "Logout realizado com sucesso" });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// ===========================================================
-// 📌 ME (dados do usuário autenticado)
-// ===========================================================
-exports.me = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "Usuário não encontrado",
-      });
-    }
-
-    const unreadCount = await Notification.getUnreadCount(user._id);
-    const pendingNotifications = await Notification.find({
-      user: user._id,
-      displayed: false,
-      status: "unread",
-    })
-      .sort({ createdAt: -1 })
-      .limit(5);
-
-    res.json({
-      success: true,
-      data: {
-        user: {
-          ...user.toJSON(),
-          profilePhotoUrl: user.profilePhotoUrl || null,
-          profilePhoto: user.profilePhoto || null,
-        },
-        notifications: {
-          unreadCount,
-          hasPending: pendingNotifications.length > 0,
-          pendingCount: pendingNotifications.length,
-          recent: pendingNotifications.map((n) => ({
-            id: n._id,
-            type: n.type,
-            title: n.title,
-            message: n.message,
-            priority: n.priority,
-            createdAt: n.createdAt,
-          })),
-        },
-      },
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// // --- Helpers ---
-
-// function cookieOptions(req) {
-//   const secure = cookieSecure();
-//   return {
-//     httpOnly: true,
-//     secure,
-//     sameSite: "strict",
-//     maxAge: msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d"),
-//   };
-// }
-
-// function cookieSecure() {
-//   return (
-//     process.env.COOKIE_SECURE === "true" ||
-//     process.env.NODE_ENV === "production"
-//   );
-// }
-
-// function msToMillis(str) {
-//   try {
-//     const num = parseInt(str.slice(0, -1), 10);
-//     const unit = str.slice(-1);
-//     if (unit === "d") return num * 24 * 60 * 60 * 1000;
-//     if (unit === "h") return num * 60 * 60 * 1000;
-//     if (unit === "m") return num * 60 * 1000;
-//     return parseInt(str, 10);
-//   } catch (e) {
-//     return 7 * 24 * 60 * 60 * 1000;
-//   }
-// }
