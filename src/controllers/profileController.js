@@ -136,11 +136,12 @@ const profileController = {
         success: true,
         message: "Perfil atualizado com sucesso!",
         user: updatedUser,
-        profilePhoto: req.processedImage
+        profilePhoto: req.processedImage // Verifica se a imagem foi processada
           ? {
-              url: user.profilePhotoUrl, // URL do GCS
-              filename: user.profilePhoto.filename,
-              storage: "gcs", // 🆕 Indicador
+              // ✅ CORRIGIDO: Usa a URL do GCS que o middleware anexou à requisição
+              url: req.processedImage.url, // <--- USAR A NOVA URL AQUI
+              filename: req.processedImage.filename, // Usar o novo nome do arquivo, se estiver disponível
+              storage: "gcs",
             }
           : undefined,
       });
