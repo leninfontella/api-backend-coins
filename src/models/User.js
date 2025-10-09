@@ -318,8 +318,9 @@ userSchema.virtual("firstName").get(function () {
 // Virtual para URL completa da foto - VERSÃO CORRIGIDA
 
 userSchema.virtual("profilePhotoUrl").get(function () {
+  // 🔧 CRÍTICO: Nunca retornar avatar/emoji aqui
   if (this.profilePhoto && this.profilePhoto.path) {
-    // 🆕 Se for GCS, retorna a URL diretamente (já é pública)
+    // Se for GCS, retorna a URL diretamente (já é pública)
     if (this.profilePhoto.storage === "gcs") {
       return this.profilePhoto.path;
     }
@@ -331,6 +332,8 @@ userSchema.virtual("profilePhotoUrl").get(function () {
 
     return `/uploads/profiles/${this.profilePhoto.filename}`;
   }
+
+  // 🔧 CORREÇÃO: Retornar NULL em vez de avatar
   return null;
 });
 
@@ -349,16 +352,33 @@ userSchema.virtual("nextLevelXp").get(function () {
 });
 
 // ========== MIDDLEWARE ==========
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+userSchema.pre("save", function (next) {
+  // 🔧 CORREÇÃO: Não validar arquivos do GCS no sistema de arquivos local
+  if (this.profilePhoto && this.profilePhoto.filename) {
+    // Se a foto está no GCS, NÃO verificar localmente
+    if (this.profilePhoto.storage === "gcs") {
+      console.log(
+        `✅ Foto no GCS, pulando validação local: ${this.profilePhoto.filename}`
+      );
+      return next();
+    }
 
-  try {
-    const salt = await bcrypt.genSalt(12);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
+    // Apenas para arquivos locais, verificar existência
+    if (!this.profilePhotoExists()) {
+      console.log(
+        `⚠️ Foto local ${this.profilePhoto.filename} não encontrada, limpando dados`
+      );
+      this.profilePhoto = {
+        filename: null,
+        path: null,
+        uploadDate: null,
+        storage: null,
+        bucket: null,
+      };
+    }
   }
+
+  next();
 });
 
 // Middleware adicional para limpar dados de foto inválidos
@@ -542,6 +562,12 @@ userSchema.methods.profilePhotoExists = function () {
     return false;
   }
 
+  // 🔧 NOVO: Se estiver no GCS, assumir que existe (não validar localmente)
+  if (this.profilePhoto.storage === "gcs") {
+    return true; // GCS tem sua própria validação
+  }
+
+  // Validar apenas arquivos locais
   const fs = require("fs");
   const path = require("path");
 
@@ -778,8 +804,8 @@ userSchema.methods.getPublicData = function () {
     name: this.name,
     username: this.username,
     email: this.email,
-    avatar: this.avatar,
-    profilePhotoUrl: this.profilePhotoUrl,
+    avatar: this.avatar, // Emoji para fallback no frontend
+    profilePhotoUrl: this.profilePhotoUrl, // NULL ou URL válida do GCS
     institution: this.institution,
     coins: this.coins,
     level: this.level,
