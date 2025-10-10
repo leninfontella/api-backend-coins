@@ -1,9 +1,9 @@
 // src/services/gcsService.js
 const { Storage } = require("@google-cloud/storage");
-const path = require("path");
 const sharp = require("sharp");
 
-// Inicializar cliente do Google Cloud Storage
+// ========== CONFIGURAÇÃO E INICIALIZAÇÃO ==========
+
 let storageOptions = {
   projectId: process.env.GCS_PROJECT_ID,
 };
@@ -11,11 +11,9 @@ let storageOptions = {
 // 1. Tenta carregar o conteúdo JSON COMPLETO da variável de ambiente (Método Render/Produção)
 if (process.env.GCP_CREDENTIALS_JSON) {
   try {
-    // Faz o parse do conteúdo JSON da variável de ambiente
     storageOptions.credentials = JSON.parse(process.env.GCP_CREDENTIALS_JSON);
     console.log("✅ GCS Auth: Autenticação via JSON de Variável de Ambiente.");
   } catch (e) {
-    // Mensagem de erro CRÍTICA se o JSON estiver mal formatado
     console.error(
       "🚨 ERRO ao parsear GCP_CREDENTIALS_JSON. Verifique o formato:",
       e.message
@@ -33,9 +31,10 @@ if (process.env.GCP_CREDENTIALS_JSON) {
 }
 
 const storage = new Storage(storageOptions);
-
 const bucketName = process.env.GCS_BUCKET_NAME;
 const bucket = storage.bucket(bucketName);
+
+// ========== FUNÇÕES DE UPLOAD E DELETE ==========
 
 /**
  * Fazer upload de imagem para o GCS
@@ -44,7 +43,6 @@ const bucket = storage.bucket(bucketName);
  * @param {string} mimetype - Tipo MIME da imagem
  * @returns {Promise<Object>} URL pública e metadados
  */
-
 async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
   try {
     console.log(`📤 Iniciando upload para GCS: ${filename}`);
@@ -69,7 +67,7 @@ async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
       resumable: false,
       metadata: {
         contentType: mimetype,
-        cacheControl: "public, max-age=31536000", // Cache de 1 ano
+        cacheControl: "public, max-age=31536000",
         metadata: {
           uploadedAt: new Date().toISOString(),
           processedWithSharp: true,
@@ -85,8 +83,6 @@ async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
       });
 
       blobStream.on("finish", () => {
-        // 🚨 CORREÇÃO: Removemos a chamada `await blob.makePublic()`
-        // A permissão pública é herdada via IAM do Bucket.
         console.log(`✅ Upload GCS concluído: ${filename}`);
         resolve();
       });
@@ -106,7 +102,6 @@ async function uploadImage(imageBuffer, filename, mimetype = "image/webp") {
       path: `profiles/${filename}`,
     };
   } catch (error) {
-    // Apenas lança o erro da falha do stream, sem tentar acessar .message desnecessariamente
     console.error("❌ Erro no serviço GCS:", error);
     throw new Error(`Falha no upload GCS: ${error.message}`);
   }
@@ -143,6 +138,8 @@ async function deleteImage(filename) {
   }
 }
 
+// ========== FUNÇÕES DE VERIFICAÇÃO E METADADOS ==========
+
 /**
  * Verificar se arquivo existe no GCS
  * @param {string} filename - Nome do arquivo
@@ -154,23 +151,43 @@ async function fileExists(filename) {
 
     const file = bucket.file(`profiles/${filename}`);
     const [exists] = await file.exists();
+    console.log(`🔍 Verificando existência: ${filename} = ${exists}`);
 
     return exists;
   } catch (error) {
-    console.error("Erro ao verificar existência do arquivo:", error);
+    console.error(`❌ Erro ao verificar existência de ${filename}:`, error);
     return false;
+  }
+}
+
+/**
+ * Obter metadados de um arquivo
+ * @param {string} filename - Nome do arquivo
+ * @returns {Promise<object|null>}
+ */
+async function getFileMetadata(filename) {
+  try {
+    const file = bucket.file(`profiles/${filename}`);
+    const [metadata] = await file.getMetadata();
+    console.log(`📊 Metadados obtidos: ${filename}`);
+    return metadata;
+  } catch (error) {
+    console.error(`❌ Erro ao obter metadados de ${filename}:`, error);
+    return null;
   }
 }
 
 /**
  * Obter URL pública de um arquivo
  * @param {string} filename - Nome do arquivo
- * @returns {string}
+ * @returns {string|null}
  */
 function getPublicUrl(filename) {
   if (!filename) return null;
   return `https://storage.googleapis.com/${bucketName}/profiles/${filename}`;
 }
+
+// ========== FUNÇÕES DE LISTAGEM E ESTATÍSTICAS ==========
 
 /**
  * Listar todas as imagens de perfil
@@ -182,26 +199,76 @@ async function listProfileImages() {
       prefix: "profiles/",
     });
 
-    return files.map((file) => ({
+    const imageList = files.map((file) => ({
       name: file.name,
-      url: getPublicUrl(file.name.replace("profiles/", "")),
-      created: file.metadata.timeCreated,
       size: file.metadata.size,
+      contentType: file.metadata.contentType,
+      created: file.metadata.timeCreated,
+      updated: file.metadata.updated,
+      url: getPublicUrl(file.name.replace("profiles/", "")),
+      publicUrl: `https://storage.googleapis.com/${bucketName}/${file.name}`,
     }));
+
+    console.log(`📋 ${imageList.length} imagens listadas`);
+    return imageList;
   } catch (error) {
-    console.error("Erro ao listar imagens:", error);
+    console.error("❌ Erro ao listar imagens:", error);
     return [];
   }
 }
 
 /**
- * Limpar imagens antigas (mais de 30 dias sem uso)
- * @param {number} daysOld - Dias para considerar como antiga
+ * Obter estatísticas do storage
+ * @returns {Promise<object|null>}
+ */
+async function getStorageStats() {
+  try {
+    const [files] = await bucket.getFiles({
+      prefix: "profiles/",
+    });
+
+    let totalSize = 0;
+    let oldestDate = null;
+    let newestDate = null;
+
+    files.forEach((file) => {
+      totalSize += parseInt(file.metadata.size);
+      const created = new Date(file.metadata.timeCreated);
+
+      if (!oldestDate || created < oldestDate) {
+        oldestDate = created;
+      }
+      if (!newestDate || created > newestDate) {
+        newestDate = created;
+      }
+    });
+
+    return {
+      totalFiles: files.length,
+      totalSize: totalSize,
+      totalSizeMB: (totalSize / (1024 * 1024)).toFixed(2),
+      oldestFile: oldestDate,
+      newestFile: newestDate,
+      bucket: bucketName,
+    };
+  } catch (error) {
+    console.error("❌ Erro ao obter estatísticas:", error);
+    return null;
+  }
+}
+
+// ========== FUNÇÕES DE MANUTENÇÃO ==========
+
+/**
+ * Limpar imagens antigas (mais de X dias)
+ * @param {number} daysOld - Número de dias
  * @returns {Promise<number>} Quantidade de arquivos removidos
  */
 async function cleanupOldImages(daysOld = 30) {
   try {
-    console.log(`🧹 Iniciando limpeza de imagens antigas (>${daysOld} dias)`);
+    console.log(
+      `🧹 Iniciando limpeza de imagens antigas (>${daysOld} dias)...`
+    );
 
     const [files] = await bucket.getFiles({
       prefix: "profiles/",
@@ -217,18 +284,20 @@ async function cleanupOldImages(daysOld = 30) {
 
       if (age > maxAge) {
         await file.delete();
+        console.log(`🗑️ Arquivo antigo removido: ${file.name}`);
         removedCount++;
-        console.log(`🗑️ Removido: ${file.name}`);
       }
     }
 
     console.log(`✅ Limpeza concluída: ${removedCount} arquivos removidos`);
     return removedCount;
   } catch (error) {
-    console.error("Erro na limpeza de imagens:", error);
+    console.error("❌ Erro ao limpar imagens antigas:", error);
     return 0;
   }
 }
+
+// ========== FUNÇÕES DE HEALTH CHECK ==========
 
 /**
  * Verificar saúde da conexão com GCS
@@ -236,40 +305,74 @@ async function cleanupOldImages(daysOld = 30) {
  */
 async function checkHealth() {
   try {
+    // Verificar se bucket existe
     const [exists] = await bucket.exists();
 
     if (!exists) {
       return {
         healthy: false,
+        accessible: false,
         error: "Bucket não encontrado",
+        bucket: bucketName,
+        timestamp: new Date().toISOString(),
       };
     }
 
+    // Obter metadados do bucket
     const [metadata] = await bucket.getMetadata();
+
+    // Tentar listar 1 arquivo para verificar acesso
+    const [files] = await bucket.getFiles({
+      prefix: "profiles/",
+      maxResults: 1,
+    });
 
     return {
       healthy: true,
+      accessible: true,
       bucket: bucketName,
       location: metadata.location,
       storageClass: metadata.storageClass,
       projectId: process.env.GCS_PROJECT_ID,
+      sampleFilesFound: files.length,
+      message: "GCS está funcionando corretamente",
+      timestamp: new Date().toISOString(),
     };
   } catch (error) {
     return {
       healthy: false,
+      accessible: false,
+      bucket: bucketName,
       error: error.message,
+      message: "Erro ao acessar GCS",
+      timestamp: new Date().toISOString(),
     };
   }
 }
 
+// ========== EXPORTAÇÃO ==========
+
 module.exports = {
+  // Upload e Delete
   uploadImage,
   deleteImage,
+
+  // Verificação e Metadados
   fileExists,
+  getFileMetadata,
   getPublicUrl,
+
+  // Listagem e Estatísticas
   listProfileImages,
+  getStorageStats,
+
+  // Manutenção
   cleanupOldImages,
+
+  // Health Check
   checkHealth,
+
+  // Exports diretos (para uso avançado)
   bucket,
   bucketName,
 };

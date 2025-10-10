@@ -1,3 +1,5 @@
+// middleware/upload.js - VERSÃO COMPLETA E CORRIGIDA
+
 const multer = require("multer");
 const sharp = require("sharp");
 const path = require("path");
@@ -8,6 +10,9 @@ const gcsService = require("../services/gcsService");
 
 // IMPORT PARA CACHE EM MEMÓRIA
 const serverCache = require("../utils/serverCache");
+
+// 🔧 IMPORT DO MODEL USER (NECESSÁRIO PARA PERSISTÊNCIA)
+const User = require("../models/User");
 
 // Criar diretório de uploads se não existir (mantém como fallback/backup local)
 const uploadsDir = path.join(__dirname, "../uploads/profiles");
@@ -59,7 +64,7 @@ const invalidateHttpCache = (filename) => {
   }
 };
 
-// Middleware para processar e fazer upload da imagem para GCS
+// 🔧 MIDDLEWARE CORRIGIDO: Processar e fazer upload da imagem para GCS
 const processProfileImage = async (req, res, next) => {
   if (!req.file) {
     return next();
@@ -68,37 +73,52 @@ const processProfileImage = async (req, res, next) => {
   try {
     console.log(`📤 Processando upload de imagem para usuário: ${req.user.id}`);
 
+    // 🔧 CORREÇÃO CRÍTICA: Buscar usuário do banco para obter foto atual
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      console.error(`❌ Usuário ${req.user.id} não encontrado no banco`);
+      return next(new Error("Usuário não encontrado"));
+    }
+
     // INVALIDAR E DELETAR IMAGEM ANTIGA DO GCS
-    if (req.user.profileImage) {
-      const oldImagePath = `/uploads/profiles/${req.user.profileImage}`;
+    if (user.profilePhoto && user.profilePhoto.filename) {
+      const oldFilename = user.profilePhoto.filename;
+      const oldImagePath = `/uploads/profiles/${oldFilename}`;
+
+      console.log(`🔄 Removendo foto antiga: ${oldFilename}`);
 
       // Invalidar cache em memória
       serverCache.invalidate(oldImagePath);
 
       // Invalidar cache HTTP (se houver cópia local)
-      invalidateHttpCache(req.user.profileImage);
+      invalidateHttpCache(oldFilename);
 
       // 🆕 DELETAR DO GCS
-      await gcsService.deleteImage(req.user.profileImage);
-
-      console.log(
-        `🔄 Caches invalidados e arquivo deletado do GCS: ${req.user.profileImage}`
-      );
+      try {
+        await gcsService.deleteImage(oldFilename);
+        console.log(`✅ Foto antiga removida do GCS: ${oldFilename}`);
+      } catch (deleteError) {
+        console.warn(
+          `⚠️  Erro ao deletar foto antiga do GCS: ${deleteError.message}`
+        );
+        // Continua mesmo se falhar a deleção (pode não existir)
+      }
 
       // Remover arquivo físico local antigo (se existir como backup)
-      const oldFilePath = path.join(uploadsDir, req.user.profileImage);
+      const oldFilePath = path.join(uploadsDir, oldFilename);
       if (fs.existsSync(oldFilePath)) {
         try {
           await fs.promises.unlink(oldFilePath);
-          console.log(
-            `🗑️  Arquivo local antigo removido: ${req.user.profileImage}`
-          );
+          console.log(`🗑️  Arquivo local antigo removido: ${oldFilename}`);
         } catch (unlinkError) {
-          console.error(
+          console.warn(
             `⚠️  Erro ao remover arquivo local antigo: ${unlinkError.message}`
           );
         }
       }
+    } else {
+      console.log(`ℹ️  Usuário não possui foto anterior`);
     }
 
     // Gerar nome único para o arquivo
@@ -107,9 +127,27 @@ const processProfileImage = async (req, res, next) => {
 
     console.log(`🔄 Gerando nova imagem: ${filename}`);
 
-    // 🆕 FAZER UPLOAD DIRETAMENTE PARA O GCS
+    // 🔧 CORREÇÃO CRÍTICA: Processar imagem ANTES de enviar ao GCS
+    console.log(`📐 Processando imagem com Sharp...`);
+    const processedBuffer = await sharp(req.file.buffer)
+      .resize(300, 300, {
+        fit: "cover",
+        position: "center",
+      })
+      .webp({
+        quality: 85,
+        effort: 4,
+      })
+      .toBuffer();
+
+    console.log(
+      `✅ Imagem processada: ${processedBuffer.length} bytes (original: ${req.file.size} bytes)`
+    );
+
+    // 🆕 FAZER UPLOAD PARA O GCS COM BUFFER PROCESSADO
+    console.log(`📤 Iniciando upload para GCS: ${filename}`);
     const uploadResult = await gcsService.uploadImage(
-      req.file.buffer,
+      processedBuffer, // 🔧 Usar buffer processado, não original
       filename,
       "image/webp"
     );
@@ -118,24 +156,14 @@ const processProfileImage = async (req, res, next) => {
       throw new Error("Falha no upload para GCS");
     }
 
-    console.log(`✅ Upload para GCS bem-sucedido: ${uploadResult.url}`);
+    console.log(`✅ Upload GCS concluído: ${filename}`);
+    console.log(`✅ URL pública: ${uploadResult.url}`);
 
     // 🆕 OPCIONAL: Salvar cópia local como backup
     const saveLocalBackup = process.env.SAVE_LOCAL_BACKUP === "true";
     if (saveLocalBackup) {
       try {
         const filepath = path.join(uploadsDir, filename);
-        const processedBuffer = await sharp(req.file.buffer)
-          .resize(300, 300, {
-            fit: "cover",
-            position: "center",
-          })
-          .webp({
-            quality: 85,
-            effort: 4,
-          })
-          .toBuffer();
-
         await fs.promises.writeFile(filepath, processedBuffer);
         console.log(`💾 Backup local salvo: ${filename}`);
       } catch (backupError) {
@@ -145,13 +173,12 @@ const processProfileImage = async (req, res, next) => {
     }
 
     // PRÉ-CARREGAR A NOVA IMAGEM NO CACHE EM MEMÓRIA (para requisições futuras)
-    // Nota: A URL agora é do GCS, não local
     const newImagePath = uploadResult.url;
     serverCache.set(
       newImagePath,
-      req.file.buffer,
+      processedBuffer, // 🔧 Usar buffer processado
       "image/webp",
-      uploadResult.size
+      processedBuffer.length // 🔧 Tamanho correto
     );
     console.log(`💾 Nova imagem pré-carregada no cache: ${filename}`);
 
@@ -161,7 +188,7 @@ const processProfileImage = async (req, res, next) => {
       path: uploadResult.url, // 🆕 URL do GCS, não caminho local
       fullPath: uploadResult.path, // Path no bucket GCS
       publicUrl: uploadResult.url, // 🆕 URL pública do GCS
-      size: uploadResult.size,
+      size: processedBuffer.length, // 🔧 Tamanho correto do buffer processado
       originalName: req.file.originalname,
       originalSize: req.file.size,
       mimetype: "image/webp",
@@ -172,7 +199,7 @@ const processProfileImage = async (req, res, next) => {
     };
 
     console.log(
-      `✅ Imagem processada e enviada para GCS: ${filename} (${uploadResult.size} bytes)`
+      `✅ Imagem processada e enviada para GCS: ${filename} (${processedBuffer.length} bytes)`
     );
     console.log(`🌐 URL pública: ${uploadResult.url}`);
 
@@ -209,10 +236,12 @@ const processProfileImage = async (req, res, next) => {
       errorMessage = "Formato de imagem não suportado";
     } else if (error.message.includes("Network")) {
       errorMessage = "Erro de conexão com o servidor de armazenamento";
+    } else if (error.message.includes("Usuário não encontrado")) {
+      errorMessage = "Usuário não encontrado";
     }
 
     const err = new Error(errorMessage);
-    err.status = 400;
+    err.status = error.message.includes("Usuário não encontrado") ? 404 : 400;
     err.originalError = error.message;
     next(err);
   }
