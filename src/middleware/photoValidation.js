@@ -7,14 +7,14 @@ const gcsService = require("../services/gcsService");
  * Middleware para validar e restaurar foto de perfil
  * Executa ANTES de retornar dados do usuário
  */
+// middleware/photoValidation.js
+
 const validateAndRestorePhoto = async (req, res, next) => {
   try {
-    // Só executar se houver usuário autenticado
     if (!req.user || !req.user.id) {
       return next();
     }
 
-    // Buscar usuário do banco
     const user = await User.findById(req.user.id);
 
     if (!user) {
@@ -25,13 +25,11 @@ const validateAndRestorePhoto = async (req, res, next) => {
     if (user.profilePhoto && user.profilePhoto.filename) {
       const { filename, path, storage } = user.profilePhoto;
 
-      // Se é foto do GCS
+      // 🔧 CRÍTICO: NUNCA REMOVER FOTOS DO GCS POR NÃO EXISTIR LOCALMENTE
       if (storage === "gcs") {
-        // Verificar se URL está válida
+        // ✅ Para GCS, apenas verificar se URL está válida
         if (!path || !path.startsWith("http")) {
-          console.log(
-            `⚠️ URL inválida detectada para ${user.email}, reconstruindo...`
-          );
+          console.log(`⚠️ URL inválida para ${user.email}, reconstruindo...`);
 
           const bucket = user.profilePhoto.bucket || "altrum_coins";
           const correctUrl = `https://storage.googleapis.com/${bucket}/profiles/${filename}`;
@@ -42,26 +40,19 @@ const validateAndRestorePhoto = async (req, res, next) => {
           console.log(`✅ URL corrigida: ${correctUrl}`);
         }
 
-        // Verificar se arquivo existe no GCS (apenas ocasionalmente para performance)
-        if (Math.random() < 0.1) {
-          // 10% das requisições
-          const exists = await gcsService.fileExists(filename);
+        // ✅ NUNCA fazer verificação de existência aqui
+        // O arquivo está no GCS, não no servidor
+      } else if (storage === "local") {
+        // ⚠️ Apenas para fotos locais antigas (se existirem)
+        const fs = require("fs");
+        const path = require("path");
+        const localPath = path.join(__dirname, "../uploads/profiles", filename);
 
-          if (!exists) {
-            console.log(
-              `⚠️ Arquivo ${filename} não existe no GCS, limpando dados...`
-            );
-
-            user.profilePhoto = {
-              filename: null,
-              path: null,
-              uploadDate: null,
-              storage: null,
-              bucket: null,
-            };
-
-            await user.save();
-          }
+        if (!fs.existsSync(localPath)) {
+          console.log(`⚠️ Foto local não encontrada: ${filename}`);
+          // NÃO limpar, apenas marcar para migração
+          user.profilePhoto.needsMigration = true;
+          await user.save();
         }
       }
     }
@@ -69,8 +60,7 @@ const validateAndRestorePhoto = async (req, res, next) => {
     next();
   } catch (error) {
     console.error("❌ Erro no middleware de validação de foto:", error);
-    // Não bloquear requisição em caso de erro
-    next();
+    next(); // Não bloquear requisição
   }
 };
 

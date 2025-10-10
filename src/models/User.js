@@ -354,21 +354,16 @@ userSchema.virtual("nextLevelXp").get(function () {
 
 // ========== MIDDLEWARE ==========
 userSchema.pre("save", function (next) {
-  // 🔧 CORREÇÃO CRÍTICA: Não validar arquivos do GCS no sistema de arquivos local
+  // Validação apenas para fotos LOCAIS
   if (this.profilePhoto && this.profilePhoto.filename) {
-    // Se a foto está no GCS, NÃO verificar localmente
+    // ✅ Se for GCS, NÃO validar localmente
     if (this.profilePhoto.storage === "gcs") {
-      console.log(
-        `✅ Foto no GCS, pulando validação local: ${this.profilePhoto.filename}`
-      );
-      return next(); // ✅ Pular validação para GCS
+      console.log(`✅ Foto no GCS, pulando validação local`);
+      return next();
     }
 
-    // Apenas para arquivos locais, verificar existência
+    // Validar apenas fotos locais antigas
     if (!this.profilePhotoExists()) {
-      console.log(
-        `⚠️  Foto local ${this.profilePhoto.filename} não encontrada, limpando dados`
-      );
       this.profilePhoto = {
         filename: null,
         path: null,
