@@ -377,6 +377,24 @@ userSchema.pre("save", function (next) {
   next();
 });
 
+// Middleware para criptografar senha antes de salvar
+userSchema.pre("save", async function (next) {
+  // Apenas roda se o campo password foi modificado (ou é novo)
+  if (!this.isModified("password")) {
+    return next();
+  }
+
+  try {
+    // 10 é o custo de salting recomendado
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    console.error("Erro ao criptografar senha:", error);
+    next(error);
+  }
+});
+
 // Middleware adicional para limpar dados de foto inválidos
 userSchema.pre("save", function (next) {
   // Se há dados de foto mas o arquivo não existe, limpar os dados
