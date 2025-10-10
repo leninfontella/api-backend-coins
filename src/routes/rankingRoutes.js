@@ -5,6 +5,8 @@ const auth = require("../middleware/auth");
 const path = require("path");
 const fs = require("fs");
 
+const gcsService = require("../services/gcsService");
+
 const router = express.Router();
 
 // ========== FUNÇÃO AUXILIAR CORRIGIDA PARA TRATAR FOTO DO PERFIL ==========
@@ -12,28 +14,39 @@ const router = express.Router();
  * Processa dados do usuário para incluir profilePhotoUrl correto
  * CORREÇÃO: Verifica se o arquivo realmente existe antes de retornar URL
  */
-function processUserProfilePhoto(
-  user,
-  baseUrl = process.env.BASE_URL || "http://localhost:5000"
-) {
-  // CORREÇÃO: Verificar se o usuário tem profilePhoto com filename válido
+// routes/rankingRoutes.js
+
+/**
+ * Processa dados do usuário para incluir profilePhotoUrl correto usando GCS.
+ * CORREÇÃO CRÍTICA: Usa gcsService para gerar URL e verificar existência no GCS.
+ * * @param {object} user - Objeto do usuário (Model User)
+ * @returns {Promise<string|null>} URL pública da foto ou null
+ */
+async function processUserProfilePhoto(user) {
+  // A URL base local não é mais necessária para GCS, então removemos o parâmetro `baseUrl`.
+
+  // 1. Verificar se o usuário tem a referência no banco de dados
   if (user.profilePhoto && user.profilePhoto.filename) {
-    // NOVO: Verificar se o arquivo realmente existe no sistema de arquivos
-    const uploadsDir = path.join(__dirname, "../uploads/profiles");
-    const filePath = path.join(uploadsDir, user.profilePhoto.filename);
+    const filename = user.profilePhoto.filename;
 
     try {
-      // Se o arquivo existe, retornar a URL
-      if (fs.existsSync(filePath)) {
-        // console.log(`✅ Foto encontrada: ${user.profilePhoto.filename}`);
-        return `${baseUrl}/uploads/profiles/${user.profilePhoto.filename}`;
+      // 2. Usar o serviço GCS para verificar se o arquivo existe (Assíncrono!)
+      const fileExistsInGCS = await gcsService.fileExists(filename);
+
+      if (fileExistsInGCS) {
+        // 3. Se o arquivo existe no GCS, gerar a URL pública
+        const publicUrl = gcsService.getPublicUrl(filename);
+
+        // Log para confirmar que a foto GCS foi usada
+        // console.log(`✅ Foto GCS encontrada: ${publicUrl}`);
+        return publicUrl;
       } else {
-        // Se não existe, log de aviso e limpar o campo no banco
+        // 4. Se não existe no GCS, logar aviso e limpar o campo no banco
         console.log(
-          `⚠️ Arquivo não encontrado: ${user.profilePhoto.filename} - removendo referência`
+          `⚠️ Arquivo não encontrado no GCS: ${filename} - removendo referência`
         );
 
-        // OPCIONAL: Limpar referência inválida do banco de dados de forma assíncrona
+        // Limpar referência inválida do banco de dados (Mantendo a lógica de limpeza)
         setImmediate(async () => {
           try {
             await User.findByIdAndUpdate(user._id, {
@@ -44,7 +57,7 @@ function processUserProfilePhoto(
             );
           } catch (error) {
             console.error(
-              `❌ Erro ao limpar referência inválida: ${error.message}`
+              `❌ Erro ao limpar referência GCS inválida: ${error.message}`
             );
           }
         });
@@ -52,9 +65,18 @@ function processUserProfilePhoto(
         return null;
       }
     } catch (error) {
-      console.error(`❌ Erro ao verificar arquivo: ${error.message}`);
+      // Em caso de falha de conexão com o GCS ou outro erro, retorna null.
+      // NÃO APAGA a referência do BD, pois o problema pode ser temporário.
+      console.error(
+        `❌ Erro ao verificar arquivo GCS ${filename}: ${error.message}`
+      );
       return null;
     }
+  }
+
+  // Bloco de fallback para URLs externas (mantido por segurança)
+  if (user.profilePhotoUrl && user.profilePhotoUrl.startsWith("http")) {
+    return user.profilePhotoUrl;
   }
 
   // Se tem profilePhotoUrl já definido (virtual), validar se é uma URL externa válida
@@ -129,7 +151,10 @@ async function cleanInvalidPhotoReferences() {
 /**
  * Formata dados do usuário para resposta da API - VERSÃO CORRIGIDA
  */
-function formatUserForRanking(user, rank = null, baseUrl = null) {
+async function formatUserForRanking(user, rank = null, baseUrl = null) {
+  // 🏆 CORREÇÃO CRÍTICA: Use 'await' aqui e torne a função 'async'
+  const photoUrl = await processUserProfilePhoto(user, baseUrl);
+
   const formattedUser = {
     _id: user._id,
     id: user._id,
@@ -138,7 +163,8 @@ function formatUserForRanking(user, rank = null, baseUrl = null) {
     displayName: user.fullName || user.name,
     username: user.username,
     avatar: user.avatar,
-    profilePhotoUrl: processUserProfilePhoto(user, baseUrl), // FUNÇÃO CORRIGIDA
+    // Atribua o resultado resolvido da Promise
+    profilePhotoUrl: photoUrl,
     coins: user.coins,
     balance: user.coins, // Compatibilidade com frontend
     level: user.level,
@@ -287,20 +313,28 @@ router.get("/", auth, async (req, res) => {
 });
 
 // ========== TOP 10 DO RANKING - CORRIGIDO ==========
+// Se formatUserForRanking está corrigida, a rota deve ser assim:
+// routes/rankingRoutes.js - ROTA /top10 CORRIGIDA
 router.get("/top10", auth, async (req, res) => {
   try {
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    // ⚠️ Removido: baseUrl não é mais usado se processUserProfilePhoto foi corrigida para GCS
 
+    // É uma boa prática usar .lean() para performance, pois você está mapeando os objetos
     const topUsers = await User.find({ status: "active" })
       .select(
         "name fullName username avatar coins level totalDonated profilePhoto"
       )
       .sort({ coins: -1, totalDonated: -1, createdAt: 1 })
-      .limit(10);
+      .limit(10)
+      .lean();
 
-    const usersWithRank = topUsers.map((user, index) => {
-      return formatUserForRanking(user, index + 1, baseUrl);
-    });
+    // 🏆 CORREÇÃO CRÍTICA: Use Promise.all() + map(async)
+    const usersWithRank = await Promise.all(
+      topUsers.map((user, index) => {
+        // Agora, o await é necessário dentro do map
+        return formatUserForRanking(user, index + 1);
+      })
+    );
 
     res.json({
       success: true,
@@ -316,53 +350,53 @@ router.get("/top10", auth, async (req, res) => {
 });
 
 // ========== POSIÇÃO ESPECÍFICA DO USUÁRIO - CORRIGIDA ==========
+
+// routes/rankingRoutes.js - ROTA /my-position CORRIGIDA E COMPLETA
+// routes/rankingRoutes.js - ROTA /my-position COMPLETA E CORRIGIDA
 router.get("/my-position", auth, async (req, res) => {
   try {
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    // 1. Buscar usuário completo (necessário para profilePhoto)
+    const user = await User.findById(req.user.id).lean();
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Usuário não encontrado" });
+    }
 
-    // Calcular posição no ranking
+    // 2. Cálculo do Ranque (seu código está OK)
     const rank =
       (await User.countDocuments({
         status: "active",
         $or: [
-          { coins: { $gt: req.user.coins } },
+          { coins: { $gt: user.coins } },
+          { coins: user.coins, totalDonated: { $gt: user.totalDonated } },
           {
-            coins: req.user.coins,
-            totalDonated: { $gt: req.user.totalDonated },
-          },
-          {
-            coins: req.user.coins,
-            totalDonated: req.user.totalDonated,
-            createdAt: { $lt: req.user.createdAt },
+            coins: user.coins,
+            totalDonated: user.totalDonated,
+            createdAt: { $lt: user.createdAt },
           },
         ],
       })) + 1;
 
     const totalUsers = await User.countDocuments({ status: "active" });
 
-    // Buscar dados completos do usuário incluindo foto
-    const userWithPhoto = await User.findById(req.user._id).select(
-      "name fullName username avatar coins level totalDonated totalReceived createdAt updatedAt email profilePhoto"
-    );
+    // 3. 🏆 CORREÇÃO CRÍTICA: Use await para formatar o usuário
+    const formattedUser = await formatUserForRanking(user, rank);
 
-    const userFormatted = formatUserForRanking(userWithPhoto, rank, baseUrl);
-    // Adicionar campos extras para my-position
-    userFormatted.email = userWithPhoto.email;
-    userFormatted.updatedAt = userWithPhoto.updatedAt;
-
+    // 4. Retornar a resposta completa
     res.json({
       success: true,
       data: {
-        user: userFormatted,
+        myPosition: rank,
         totalUsers,
-        percentile: (((totalUsers - rank + 1) / totalUsers) * 100).toFixed(1),
+        user: formattedUser,
       },
     });
   } catch (error) {
     console.error("Erro ao buscar posição do usuário:", error);
     res.status(500).json({
       success: false,
-      message: "Erro ao buscar posição",
+      message: "Erro ao buscar posição do usuário",
     });
   }
 });

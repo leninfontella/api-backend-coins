@@ -298,50 +298,6 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Em User.js, ANTES do middleware pre('save'):
-
-userSchema.pre("save", function (next) {
-  // Log de mudanças na foto
-  if (this.isModified("profilePhoto")) {
-    console.log("🔍 FOTO SENDO MODIFICADA:");
-    console.log("   Usuário:", this.email);
-    console.log("   Foto antes:", this._original?.profilePhoto);
-    console.log("   Foto depois:", this.profilePhoto);
-    console.log("   Stack trace:", new Error().stack);
-  }
-  next();
-});
-
-// models/User.js - ADICIONAR NO TOPO
-
-// 🛡️ PROTEÇÃO: Impedir limpeza de fotos GCS
-userSchema.pre("save", function (next) {
-  // Se está tentando limpar foto GCS, BLOQUEAR
-  if (this.isModified("profilePhoto")) {
-    const wasGcs = this._original?.profilePhoto?.storage === "gcs";
-    const isNowNull = !this.profilePhoto || !this.profilePhoto.filename;
-
-    if (wasGcs && isNowNull) {
-      console.error("🚨 TENTATIVA DE APAGAR FOTO GCS BLOQUEADA!");
-      console.error("   Usuário:", this.email);
-      console.error("   Foto:", this._original.profilePhoto.filename);
-      console.error("   Stack:", new Error().stack);
-
-      // Restaurar foto original
-      this.profilePhoto = this._original.profilePhoto;
-
-      // Opcional: Lançar erro para identificar quem está chamando
-      // throw new Error('Tentativa de apagar foto GCS bloqueada');
-    }
-  }
-  next();
-});
-
-// Salvar estado original para comparação
-userSchema.post("init", function () {
-  this._original = this.toObject();
-});
-
 // ========== ÍNDICES PARA OTIMIZAÇÃO ==========
 userSchema.index({ name: "text", username: "text", institution: "text" });
 userSchema.index({ email: 1 });
