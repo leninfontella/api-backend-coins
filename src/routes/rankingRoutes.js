@@ -235,22 +235,26 @@ ensureUploadsDirectory();
 router.get("/", auth, async (req, res) => {
   try {
     const { limit = 100, page = 1 } = req.query;
-    const skip = (page - 1) * limit;
+    const limitInt = parseInt(limit);
+    const pageInt = parseInt(page);
+    const skip = (pageInt - 1) * limitInt;
+    // O baseUrl não é mais usado na lógica de foto, mas mantemos por enquanto, caso seja necessário em outro lugar.
     const baseUrl = `${req.protocol}://${req.get("host")}`;
 
-    // Buscar usuários ativos ordenados por coins - INCLUINDO profilePhoto
+    // Busca no banco de dados
     const users = await User.find({ status: "active" })
       .select(
         "name fullName username avatar coins level totalDonated totalReceived createdAt profilePhoto"
       )
       .sort({ coins: -1, totalDonated: -1, createdAt: 1 })
-      .limit(parseInt(limit))
-      .skip(skip);
+      .limit(limitInt)
+      .skip(skip)
+      .lean(); // 💡 CRÍTICO: .lean() para melhorar performance na manipulação
 
     // Contar total de usuários para paginação
     const totalUsers = await User.countDocuments({ status: "active" });
 
-    // Encontrar posição do usuário atual no ranking global
+    // Encontrar posição do usuário atual no ranking global (Lógica OK)
     const currentUserRank =
       (await User.countDocuments({
         status: "active",
@@ -268,20 +272,27 @@ router.get("/", auth, async (req, res) => {
         ],
       })) + 1;
 
-    // CORREÇÃO: Aplicar formatação com validação de fotos
-    const usersWithRank = users.map((user, index) => {
-      return formatUserForRanking(user, skip + index + 1, baseUrl);
-    });
-
-    // Buscar dados completos do usuário atual incluindo foto
-    const currentUserWithPhoto = await User.findById(req.user._id).select(
-      "name fullName username avatar coins level totalDonated totalReceived createdAt profilePhoto"
+    // 🏆 CORREÇÃO CRÍTICA 1: Aplicar formatação assíncrona com Promise.all()
+    const usersWithRank = await Promise.all(
+      users.map((user, index) => {
+        // formatUserForRanking é 'async' e precisa ser aguardada
+        // Removemos baseUrl daqui, pois ele não é mais necessário para a função de foto GCS
+        return formatUserForRanking(user, skip + index + 1);
+      })
     );
 
-    const currentUserFormatted = formatUserForRanking(
+    // Buscar dados completos do usuário atual (sem .lean() para garantir que a foto seja resolvida)
+    const currentUserWithPhoto = await User.findById(req.user._id)
+      .select(
+        "name fullName username avatar coins level totalDonated totalReceived createdAt profilePhoto"
+      )
+      .lean(); // 💡 Use .lean() aqui também!
+
+    // 🏆 CORREÇÃO CRÍTICA 2: Aguardar a formatação do usuário atual (também é async)
+    const currentUserFormatted = await formatUserForRanking(
       currentUserWithPhoto,
-      currentUserRank,
-      baseUrl
+      currentUserRank
+      // Removemos baseUrl daqui
     );
 
     res.json({
@@ -289,8 +300,8 @@ router.get("/", auth, async (req, res) => {
       data: {
         users: usersWithRank,
         totalUsers,
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalUsers / limit),
+        currentPage: pageInt,
+        totalPages: Math.ceil(totalUsers / limitInt),
         currentUserRank,
         currentUser: currentUserFormatted,
       },
@@ -395,9 +406,10 @@ router.get("/my-position", auth, async (req, res) => {
 router.get("/around-me", auth, async (req, res) => {
   try {
     const { range = 5 } = req.query;
+    // O baseUrl não é mais usado, mas mantemos o cálculo por segurança se outras partes do código usarem.
     const baseUrl = `${req.protocol}://${req.get("host")}`;
 
-    // Calcular posição atual
+    // 1. Cálculo da posição atual (Lógica OK)
     const currentRank =
       (await User.countDocuments({
         status: "active",
@@ -406,6 +418,12 @@ router.get("/around-me", auth, async (req, res) => {
           {
             coins: req.user.coins,
             totalDonated: { $gt: req.user.totalDonated },
+          },
+          // A lógica de createdAt não está no seu código original para around-me, mas é bom tê-la.
+          {
+            coins: req.user.coins,
+            totalDonated: req.user.totalDonated,
+            createdAt: { $lt: req.user.createdAt },
           },
         ],
       })) + 1;
@@ -419,18 +437,26 @@ router.get("/around-me", auth, async (req, res) => {
       )
       .sort({ coins: -1, totalDonated: -1, createdAt: 1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .lean(); // 💡 Adicionar .lean() para performance
 
-    const usersWithRank = users.map((user, index) => {
-      const formattedUser = formatUserForRanking(
-        user,
-        skip + index + 1,
-        baseUrl
-      );
-      formattedUser.isCurrentUser =
-        user._id.toString() === req.user._id.toString();
-      return formattedUser;
-    });
+    // 🏆 CORREÇÃO CRÍTICA: Use await Promise.all() para resolver todas as fotos
+    const usersWithRank = await Promise.all(
+      users.map(async (user, index) => {
+        // 1. Formatar (await é feito pelo Promise.all)
+        const formattedUser = await formatUserForRanking(
+          user,
+          skip + index + 1
+          // baseUrl foi removido
+        );
+
+        // 2. Adicionar o flag de usuário atual
+        formattedUser.isCurrentUser =
+          user._id.toString() === req.user._id.toString();
+
+        return formattedUser;
+      })
+    );
 
     res.json({
       success: true,
