@@ -151,9 +151,12 @@ async function cleanInvalidPhotoReferences() {
 /**
  * Formata dados do usuário para resposta da API - VERSÃO CORRIGIDA
  */
-async function formatUserForRanking(user, rank = null, baseUrl = null) {
-  // 🏆 CORREÇÃO CRÍTICA: Use 'await' aqui e torne a função 'async'
-  const photoUrl = await processUserProfilePhoto(user, baseUrl);
+// routes/rankingRoutes.js ou arquivo de utilitário
+
+// Remova 'baseUrl' se ele não for mais usado na função
+async function formatUserForRanking(user, rank = null) {
+  // 🏆 CORREÇÃO 1: Remova 'baseUrl' da chamada. processUserProfilePhoto espera apenas 'user'.
+  const photoUrl = await processUserProfilePhoto(user);
 
   const formattedUser = {
     _id: user._id,
@@ -163,10 +166,9 @@ async function formatUserForRanking(user, rank = null, baseUrl = null) {
     displayName: user.fullName || user.name,
     username: user.username,
     avatar: user.avatar,
-    // Atribua o resultado resolvido da Promise
-    profilePhotoUrl: photoUrl,
+    profilePhotoUrl: photoUrl, // Agora é a URL correta (ou null)
     coins: user.coins,
-    balance: user.coins, // Compatibilidade com frontend
+    balance: user.coins,
     level: user.level,
     totalDonated: user.totalDonated || 0,
     totalReceived: user.totalReceived || 0,
@@ -177,16 +179,7 @@ async function formatUserForRanking(user, rank = null, baseUrl = null) {
     formattedUser.rank = rank;
   }
 
-  // Log para debug (apenas em desenvolvimento)
-  if (process.env.NODE_ENV === "development") {
-    const hasPhoto = formattedUser.profilePhotoUrl ? "📷" : "👤";
-    // console.log(
-    //   `${hasPhoto} Usuário formatado: ${formattedUser.displayName} - Foto: ${
-    //     formattedUser.profilePhotoUrl || "sem foto"
-    //   }`
-    // );
-  }
-
+  // Nenhuma lógica de retorno condicional! Retorna o usuário formatado sempre.
   return formattedUser;
 }
 
@@ -313,13 +306,8 @@ router.get("/", auth, async (req, res) => {
 });
 
 // ========== TOP 10 DO RANKING - CORRIGIDO ==========
-// Se formatUserForRanking está corrigida, a rota deve ser assim:
-// routes/rankingRoutes.js - ROTA /top10 CORRIGIDA
 router.get("/top10", auth, async (req, res) => {
   try {
-    // ⚠️ Removido: baseUrl não é mais usado se processUserProfilePhoto foi corrigida para GCS
-
-    // É uma boa prática usar .lean() para performance, pois você está mapeando os objetos
     const topUsers = await User.find({ status: "active" })
       .select(
         "name fullName username avatar coins level totalDonated profilePhoto"
@@ -328,10 +316,11 @@ router.get("/top10", auth, async (req, res) => {
       .limit(10)
       .lean();
 
-    // 🏆 CORREÇÃO CRÍTICA: Use Promise.all() + map(async)
+    // 🏆 CORREÇÃO 2: A rota deve estar OK, apenas confirmamos que 'formatUserForRanking'
+    // não espera mais o terceiro argumento (baseUrl)
     const usersWithRank = await Promise.all(
       topUsers.map((user, index) => {
-        // Agora, o await é necessário dentro do map
+        // NENHUM ARGUMENTO 'baseUrl' AQUI
         return formatUserForRanking(user, index + 1);
       })
     );
