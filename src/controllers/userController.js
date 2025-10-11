@@ -196,17 +196,8 @@ exports.getUserById = async (req, res, next) => {
   try {
     const userId = req.params.userId;
 
-    // ✅ Validar ObjectId antes de buscar
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: "ID de usuário inválido",
-      });
-    }
-
-    // ✅ Incluir profilePhoto no select
     const user = await User.findById(userId).select(
-      "name fullName email phone username coins level avatar totalDonated totalReceived createdAt updatedAt profilePhoto"
+      "name fullName email username coins level avatar totalDonated totalReceived createdAt updatedAt"
     );
 
     if (!user) {
@@ -216,29 +207,6 @@ exports.getUserById = async (req, res, next) => {
       });
     }
 
-    // ✅ CRÍTICO: Extrair dados corretos do profilePhoto (objeto)
-    let photoUrl = null;
-    let photoPath = null;
-
-    if (user.profilePhoto) {
-      if (user.profilePhoto.storage === "gcs" && user.profilePhoto.path) {
-        // GCS: path já é a URL completa
-        photoUrl = user.profilePhoto.path;
-        photoPath = user.profilePhoto.path;
-      } else if (user.profilePhoto.path) {
-        // Local: construir URL relativa
-        photoPath = user.profilePhoto.path;
-        photoUrl = user.profilePhoto.path.startsWith("/")
-          ? user.profilePhoto.path
-          : `/uploads/profiles/${user.profilePhoto.filename}`;
-      } else if (user.profilePhoto.filename) {
-        // Fallback: só tem filename
-        photoPath = `/uploads/profiles/${user.profilePhoto.filename}`;
-        photoUrl = photoPath;
-      }
-    }
-
-    // ✅ Retornar estrutura limpa e compatível
     res.json({
       success: true,
       data: {
@@ -254,13 +222,7 @@ exports.getUserById = async (req, res, next) => {
           level: user.level,
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
-          avatar: user.avatar || "👤",
-
-          // ✅ CAMPOS DE FOTO CORRETOS
-          profilePhoto: photoPath, // Caminho/URL da foto (compatibilidade)
-          profilePhotoUrl: photoUrl, // URL completa da foto
-          photo: photoUrl, // Alias adicional
-
+          avatar: user.avatar || null,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
