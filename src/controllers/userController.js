@@ -1,5 +1,7 @@
 const User = require("../models/User");
 
+const { getPublicUrl } = require("../services/gcsService");
+
 // Obter dados completos do usuário logado
 exports.getProfile = async (req, res, next) => {
   try {
@@ -28,7 +30,7 @@ exports.getProfile = async (req, res, next) => {
           level: user.level,
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
-          avatar: user.avatar || null,
+          avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
@@ -222,7 +224,7 @@ exports.getUserById = async (req, res, next) => {
           level: user.level,
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
-          avatar: user.avatar || null,
+          avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
@@ -299,7 +301,7 @@ exports.searchUsers = async (req, res, next) => {
       username: user.username || user.email || "sem-username",
       email: user.email,
       phone: user.phone,
-      avatar: user.avatar || "👤",
+      avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
       coins: user.coins || 0,
       level: user.level || 1,
       levelText: `Nível ${user.level || 1}`,

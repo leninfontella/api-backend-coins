@@ -165,7 +165,7 @@ async function formatUserForRanking(user, rank = null) {
     fullName: user.fullName || user.name,
     displayName: user.fullName || user.name,
     username: user.username,
-    avatar: user.avatar,
+    avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
     profilePhotoUrl: photoUrl, // Agora é a URL correta (ou null)
     coins: user.coins,
     balance: user.coins,
