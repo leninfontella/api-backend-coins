@@ -223,7 +223,6 @@ exports.getUserById = async (req, res, next) => {
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
           avatar: user.avatar || null,
-          profilePhoto: user.profilePhoto ? user.profilePhoto.path : null,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
