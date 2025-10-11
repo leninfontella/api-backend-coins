@@ -196,9 +196,8 @@ exports.getUserById = async (req, res, next) => {
   try {
     const userId = req.params.userId;
 
-    // 💡 CORREÇÃO: Adicionar 'profilePhoto' ao select
     const user = await User.findById(userId).select(
-      "name fullName email username coins level avatar totalDonated totalReceived createdAt updatedAt profilePhoto"
+      "name fullName email username coins level avatar totalDonated totalReceived createdAt updatedAt"
     );
 
     if (!user) {
@@ -224,10 +223,7 @@ exports.getUserById = async (req, res, next) => {
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
           avatar: user.avatar || null,
-          // 💡 CORREÇÃO: O campo 'profilePhoto' ou 'profilePhotoUrl' estará agora no objeto 'user'
-          profilePhoto: user.profilePhoto || null,
-          // Se houver um 'virtual' para 'profilePhotoUrl' no seu modelo, ele também será incluído
-
+          profilePhoto: user.profilePhoto ? user.profilePhoto.path : null,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
@@ -238,6 +234,7 @@ exports.getUserById = async (req, res, next) => {
     next(error);
   }
 };
+
 // CORREÇÃO: Buscar usuários para sistema de doação
 
 exports.searchUsers = async (req, res, next) => {
