@@ -196,8 +196,10 @@ exports.getUserById = async (req, res, next) => {
   try {
     const userId = req.params.userId;
 
+    // ✅ CORREÇÃO: Adicionar profilePhoto ao select
     const user = await User.findById(userId).select(
-      "name fullName email username coins level avatar totalDonated totalReceived createdAt updatedAt"
+      "name fullName email phone username coins level avatar totalDonated totalReceived createdAt updatedAt profilePhoto"
+      //                                                                                                      ^^^^^^^^^^^^ NOVO
     );
 
     if (!user) {
@@ -207,6 +209,7 @@ exports.getUserById = async (req, res, next) => {
       });
     }
 
+    // ✅ CORREÇÃO: Incluir profilePhoto e profilePhotoUrl no retorno
     res.json({
       success: true,
       data: {
@@ -223,6 +226,8 @@ exports.getUserById = async (req, res, next) => {
           totalDonated: user.totalDonated || 0,
           totalReceived: user.totalReceived || 0,
           avatar: user.avatar || null,
+          profilePhoto: user.profilePhoto || null, // ✅ NOVO
+          profilePhotoUrl: user.profilePhotoUrl || null, // ✅ NOVO (virtual)
           createdAt: user.createdAt,
           updatedAt: user.updatedAt,
         },
