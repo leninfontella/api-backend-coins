@@ -254,7 +254,7 @@ router.get(
             name: user.name,
             fullName: user.fullName || user.name,
             username: user.username,
-            avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
+            avatar: user.avatar,
             coins: user.coins,
             totalDonated: user.totalDonated || 0,
             level: user.level,

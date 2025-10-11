@@ -117,7 +117,7 @@ const profileController = {
         email: user.email,
         phone: user.phone || "",
         profilePhotoUrl: user.profilePhotoUrl, // 🆕 Virtual que retorna URL do GCS
-        avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
+        avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
         balance: user.coins, // Alias
@@ -365,7 +365,7 @@ const profileController = {
         email: user.email,
         phone: user.phone || "",
         profilePhotoUrl: null, // 🔧 Agora é null
-        avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
+        avatar: user.avatar,
         institution: user.institution,
         coins: user.coins,
         balance: user.coins,
@@ -420,7 +420,7 @@ const profileController = {
         email: user.email,
         phone: user.phone || "",
         profilePhotoUrl: user.profilePhotoUrl, // 🔧 Virtual que retorna URL do GCS ou null
-        avatar: user.avatar ? getPublicUrl(user.avatar) : "👤",
+        avatar: user.avatar, // Emoji para fallback
         institution: user.institution,
         coins: user.coins,
         balance: user.coins, // Alias
