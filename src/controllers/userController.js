@@ -235,21 +235,16 @@ exports.getUserById = async (req, res, next) => {
 };
 
 // CORREÇÃO: Buscar usuários para sistema de doação
+
 exports.searchUsers = async (req, res, next) => {
   try {
-    console.log("🔍 Iniciando busca de usuários...");
-    console.log("👤 Usuário logado:", req.user);
-    console.log("🔗 Query params:", req.query);
-
     const { query, q, page = 1, limit = 10 } = req.query;
     const searchQuery = query || q;
 
-    // Validação da query
     if (!searchQuery) {
       return res.status(400).json({
         success: false,
         message: "Parâmetro de busca é obrigatório",
-        debug: "Missing 'query' or 'q' parameter",
       });
     }
 
@@ -260,21 +255,19 @@ exports.searchUsers = async (req, res, next) => {
       });
     }
 
-    console.log(`🔍 Buscando por: "${searchQuery}"`);
-
     const searchRegex = new RegExp(searchQuery.trim(), "i");
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    // 🔍 CORREÇÃO: Busca mais robusta
+    // 🔧 CORREÇÃO: Incluir profilePhoto no select
     const users = await User.find({
       $and: [
-        { _id: { $ne: req.user.id } }, // Excluir usuário atual
+        { _id: { $ne: req.user.id } },
         {
           $or: [
             { name: searchRegex },
-            { fullName: searchRegex }, // CORREÇÃO: Incluir fullName
+            { fullName: searchRegex },
             { email: searchRegex },
             { username: searchRegex },
           ],
@@ -282,43 +275,40 @@ exports.searchUsers = async (req, res, next) => {
       ],
     })
       .select(
-        "name fullName email username coins level avatar totalDonated totalReceived createdAt"
+        "name fullName email username coins level avatar totalDonated totalReceived createdAt profilePhoto" // 🔧 NOVO
       )
       .limit(limitNum)
       .skip(skip)
-      .sort({ name: 1 }); // Ordenar por nome
+      .sort({ name: 1 });
 
-    console.log(`✅ Encontrados ${users.length} usuários`);
-
-    // 🔍 CORREÇÃO: Formatar dados para o frontend
+    // 🔧 CORREÇÃO: Incluir profilePhotoUrl no retorno
     const formattedUsers = users.map((user) => ({
       id: user._id.toString(),
-      name: user.fullName || user.name || "Usuário Anônimo", // CORREÇÃO: Priorizar fullName
+      _id: user._id.toString(),
+      name: user.fullName || user.name || "Usuário Anônimo",
       fullName: user.fullName || user.name,
       displayName: user.fullName || user.name,
       username: user.username || user.email || "sem-username",
       email: user.email,
-      phone: user.phone,
       avatar: user.avatar || "👤",
+      profilePhotoUrl: user.profilePhotoUrl, // 🔧 NOVO (virtual do modelo)
       coins: user.coins || 0,
       level: user.level || 1,
       levelText: `Nível ${user.level || 1}`,
       totalDonated: user.totalDonated || 0,
       totalReceived: user.totalReceived || 0,
-      institution: "Instituição Exemplo", // TODO: Adicionar campo no modelo
       joinDate: user.createdAt
         ? user.createdAt.toISOString().split("T")[0]
         : null,
     }));
 
-    // Total de resultados (para paginação)
     const totalResults = await User.countDocuments({
       $and: [
         { _id: { $ne: req.user.id } },
         {
           $or: [
             { name: searchRegex },
-            { fullName: searchRegex }, // CORREÇÃO: Incluir fullName
+            { fullName: searchRegex },
             { email: searchRegex },
             { username: searchRegex },
           ],
@@ -339,14 +329,8 @@ exports.searchUsers = async (req, res, next) => {
           hasPrev: pageNum > 1,
         },
       },
-      debug: {
-        searchQuery: searchQuery,
-        foundUsers: users.length,
-        totalResults: totalResults,
-      },
     };
 
-    console.log("✅ Busca concluída com sucesso");
     res.json(response);
   } catch (error) {
     console.error("❌ Erro na busca de usuários:", error);
@@ -480,20 +464,19 @@ exports.getAllDonations = async (req, res, next) => {
 
     const Donation = require("../models/Donation");
 
-    // Buscar todas as doações concluídas
+    // 🔧 CORREÇÃO: Adicionar profilePhotoUrl aos selects de populate
     const donations = await Donation.find({ status: "completed" })
-      .populate("donor", "name fullName avatar username")
-      .populate("recipient", "name fullName avatar username")
+      .populate("donor", "name fullName avatar username profilePhoto") // 🔧 NOVO: incluir profilePhoto
+      .populate("recipient", "name fullName avatar username profilePhoto") // 🔧 NOVO
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
 
-    // Total de doações para paginação
     const totalDonations = await Donation.countDocuments({
       status: "completed",
     });
 
-    // Formatar dados para o frontend
+    // 🔧 CORREÇÃO: Incluir profilePhotoUrl nos objetos retornados
     const formattedDonations = donations.map((donation) => ({
       _id: donation._id,
       amount: donation.amount,
@@ -507,6 +490,7 @@ exports.getAllDonations = async (req, res, next) => {
         fullName: donation.donor.fullName || donation.donor.name,
         avatar: donation.donor.avatar || "👤",
         username: donation.donor.username,
+        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO (virtual do modelo)
       },
       recipient: {
         _id: donation.recipient._id,
@@ -514,16 +498,19 @@ exports.getAllDonations = async (req, res, next) => {
         fullName: donation.recipient.fullName || donation.recipient.name,
         avatar: donation.recipient.avatar || "👤",
         username: donation.recipient.username,
+        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
       },
       donorInfo: {
         name: donation.donor.fullName || donation.donor.name,
         avatar: donation.donor.avatar || "👤",
         username: donation.donor.username,
+        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
       },
       recipientInfo: {
         name: donation.recipient.fullName || donation.recipient.name,
         avatar: donation.recipient.avatar || "👤",
         username: donation.recipient.username,
+        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
       },
     }));
 
@@ -557,23 +544,21 @@ exports.getSentDonations = async (req, res, next) => {
 
     const Donation = require("../models/Donation");
 
-    // Buscar doações enviadas pelo usuário
+    // 🔧 CORREÇÃO: Incluir profilePhoto no populate
     const donations = await Donation.find({
       donor: req.user.id,
       status: "completed",
     })
-      .populate("recipient", "name fullName avatar username")
+      .populate("recipient", "name fullName avatar username profilePhoto") // 🔧 NOVO
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
 
-    // Total de doações enviadas
     const totalDonations = await Donation.countDocuments({
       donor: req.user.id,
       status: "completed",
     });
 
-    // Formatar dados
     const formattedDonations = donations.map((donation) => ({
       _id: donation._id,
       amount: donation.amount,
@@ -581,13 +566,14 @@ exports.getSentDonations = async (req, res, next) => {
       status: donation.status,
       createdAt: donation.createdAt,
       updatedAt: donation.updatedAt,
-      type: "sent", // Identificar como enviada
+      type: "sent",
       donor: {
         _id: req.user.id,
         name: req.user.fullName || req.user.name,
         fullName: req.user.fullName || req.user.name,
         avatar: req.user.avatar || "👤",
         username: req.user.username,
+        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
       },
       recipient: {
         _id: donation.recipient._id,
@@ -595,16 +581,19 @@ exports.getSentDonations = async (req, res, next) => {
         fullName: donation.recipient.fullName || donation.recipient.name,
         avatar: donation.recipient.avatar || "👤",
         username: donation.recipient.username,
+        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
       },
       donorInfo: {
         name: req.user.fullName || req.user.name,
         avatar: req.user.avatar || "👤",
         username: req.user.username,
+        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
       },
       recipientInfo: {
         name: donation.recipient.fullName || donation.recipient.name,
         avatar: donation.recipient.avatar || "👤",
         username: donation.recipient.username,
+        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
       },
     }));
 
@@ -638,23 +627,21 @@ exports.getReceivedDonations = async (req, res, next) => {
 
     const Donation = require("../models/Donation");
 
-    // Buscar doações recebidas pelo usuário
+    // 🔧 CORREÇÃO: Incluir profilePhoto no populate
     const donations = await Donation.find({
       recipient: req.user.id,
       status: "completed",
     })
-      .populate("donor", "name fullName avatar username")
+      .populate("donor", "name fullName avatar username profilePhoto") // 🔧 NOVO
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
 
-    // Total de doações recebidas
     const totalDonations = await Donation.countDocuments({
       recipient: req.user.id,
       status: "completed",
     });
 
-    // Formatar dados
     const formattedDonations = donations.map((donation) => ({
       _id: donation._id,
       amount: donation.amount,
@@ -662,13 +649,14 @@ exports.getReceivedDonations = async (req, res, next) => {
       status: donation.status,
       createdAt: donation.createdAt,
       updatedAt: donation.updatedAt,
-      type: "received", // Identificar como recebida
+      type: "received",
       donor: {
         _id: donation.donor._id,
         name: donation.donor.fullName || donation.donor.name,
         fullName: donation.donor.fullName || donation.donor.name,
         avatar: donation.donor.avatar || "👤",
         username: donation.donor.username,
+        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
       },
       recipient: {
         _id: req.user.id,
@@ -676,16 +664,19 @@ exports.getReceivedDonations = async (req, res, next) => {
         fullName: req.user.fullName || req.user.name,
         avatar: req.user.avatar || "👤",
         username: req.user.username,
+        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
       },
       donorInfo: {
         name: donation.donor.fullName || donation.donor.name,
         avatar: donation.donor.avatar || "👤",
         username: donation.donor.username,
+        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
       },
       recipientInfo: {
         name: req.user.fullName || req.user.name,
         avatar: req.user.avatar || "👤",
         username: req.user.username,
+        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
       },
     }));
 

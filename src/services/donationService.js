@@ -157,9 +157,12 @@ class DonationService {
       throw new Error("Query deve ter pelo menos 2 caracteres");
     }
 
-    const sanitizedQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const sanitizedQuery = query
+      .trim()
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\    const totalResults = await User");
     const searchRegex = new RegExp(sanitizedQuery, "i");
 
+    // 🔧 CORREÇÃO: Incluir profilePhoto no select
     const users = await User.find({
       $and: [
         { _id: { $ne: currentUserId } },
@@ -175,7 +178,7 @@ class DonationService {
       ],
     })
       .select(
-        "name fullName username email avatar coins level totalDonated totalReceived createdAt"
+        "name fullName username email avatar coins level totalDonated totalReceived createdAt profilePhoto" // 🔧 NOVO
       )
       .limit(limit)
       .skip(skip)
@@ -196,6 +199,7 @@ class DonationService {
       ],
     });
 
+    // 🔧 CORREÇÃO: Incluir profilePhotoUrl
     const formattedUsers = users.map((user) => ({
       id: user._id.toString(),
       name: user.fullName || user.name || "Usuário Anônimo",
@@ -204,6 +208,7 @@ class DonationService {
       username: user.username || user.email || "sem-username",
       email: user.email,
       avatar: user.avatar || "👤",
+      profilePhotoUrl: user.profilePhotoUrl, // 🔧 NOVO (virtual do modelo)
       coins: user.coins || 0,
       level: user.level || 1,
       levelText: `Nível ${user.level || 1}`,
@@ -249,17 +254,43 @@ class DonationService {
 
     query.status = "completed";
 
+    // 🔧 CORREÇÃO: Adicionar profilePhoto aos populates
     const donations = await Donation.find(query)
-      .populate("donor", "name fullName username avatar")
-      .populate("recipient", "name fullName username avatar")
+      .populate("donor", "name fullName username avatar profilePhoto") // 🔧 NOVO
+      .populate("recipient", "name fullName username avatar profilePhoto") // 🔧 NOVO
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip);
 
     const total = await Donation.countDocuments(query);
 
+    // 🔧 CORREÇÃO: Processar donations para incluir profilePhotoUrl
+    const processedDonations = donations.map((donation) => {
+      const donationObj = donation.toObject ? donation.toObject() : donation;
+
+      return {
+        ...donationObj,
+        donor: {
+          ...donationObj.donor,
+          profilePhotoUrl: donation.donor?.profilePhotoUrl, // Virtual
+        },
+        recipient: {
+          ...donationObj.recipient,
+          profilePhotoUrl: donation.recipient?.profilePhotoUrl, // Virtual
+        },
+        donorInfo: {
+          ...donationObj.donorInfo,
+          profilePhotoUrl: donation.donor?.profilePhotoUrl,
+        },
+        recipientInfo: {
+          ...donationObj.recipientInfo,
+          profilePhotoUrl: donation.recipient?.profilePhotoUrl,
+        },
+      };
+    });
+
     return {
-      donations,
+      donations: processedDonations,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -505,15 +536,15 @@ class DonationService {
    * Obter doações recentes (feed público)
    */
   async getRecentDonations(limit = 20, skip = 0) {
+    // 🔧 CORREÇÃO: Adicionar profilePhoto aos selects de populate
     const donations = await Donation.find({
       status: "completed",
-      // Apenas doações públicas
       $expr: {
         $eq: [{ $ifNull: ["$donorInfo.privacy", "public"] }, "public"],
       },
     })
-      .populate("donor", "name fullName username avatar settings")
-      .populate("recipient", "name fullName username avatar")
+      .populate("donor", "name fullName username avatar settings profilePhoto") // 🔧 NOVO
+      .populate("recipient", "name fullName username avatar profilePhoto") // 🔧 NOVO
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip);
@@ -528,22 +559,26 @@ class DonationService {
         name: donation.donor.fullName || donation.donor.name,
         username: donation.donor.username,
         avatar: donation.donor.avatar || "👤",
+        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO (virtual)
       },
       recipient: {
         _id: donation.recipient._id,
         name: donation.recipient.fullName || donation.recipient.name,
         username: donation.recipient.username,
         avatar: donation.recipient.avatar || "👤",
+        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
       },
       donorInfo: {
         name: donation.donor.fullName || donation.donor.name,
         username: donation.donor.username,
         avatar: donation.donor.avatar || "👤",
+        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
       },
       recipientInfo: {
         name: donation.recipient.fullName || donation.recipient.name,
         username: donation.recipient.username,
         avatar: donation.recipient.avatar || "👤",
+        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
       },
     }));
   }

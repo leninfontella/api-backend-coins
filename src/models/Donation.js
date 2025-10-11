@@ -6,71 +6,70 @@ const donationSchema = new mongoose.Schema(
     donor: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Usuário doador é obrigatório"],
+      required: true,
+      index: true,
     },
     recipient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Usuário receptor é obrigatório"],
+      required: true,
+      index: true,
     },
     amount: {
       type: Number,
-      required: [true, "Valor da doação é obrigatório"],
-      min: [1, "Valor mínimo é 1 moeda"],
-      max: [100000, "Valor máximo é 100.000 moedas"],
+      required: true,
+      min: 1,
+      max: 100000,
     },
     message: {
       type: String,
-      trim: true,
-      maxlength: [500, "Mensagem não pode exceder 500 caracteres"],
+      maxlength: 500,
       default: "",
-    },
-    category: {
-      type: String,
-      enum: ["support", "appreciation", "help", "gift", "other"],
-      default: "support",
     },
     status: {
       type: String,
       enum: ["pending", "completed", "failed", "cancelled"],
       default: "pending",
+      index: true,
     },
+    type: {
+      type: String,
+      enum: ["user", "system", "bonus", "reward"],
+      default: "user",
+    },
+    category: {
+      type: String,
+      enum: ["donation", "bonus", "reward", "refund", "transfer"],
+      default: "donation",
+    },
+    // 🔧 CORREÇÃO: Atualizar donorInfo para incluir profilePhotoUrl
     donorInfo: {
       name: String,
       username: String,
       avatar: String,
+      profilePhotoUrl: String, // 🔧 NOVO
+      privacy: {
+        type: String,
+        enum: ["public", "private"],
+        default: "public",
+      },
     },
+    // 🔧 CORREÇÃO: Atualizar recipientInfo para incluir profilePhotoUrl
     recipientInfo: {
       name: String,
       username: String,
       avatar: String,
+      profilePhotoUrl: String, // 🔧 NOVO
     },
     metadata: {
-      userAgent: String,
-      ipAddress: String,
-      processingTime: Number,
-      failureReason: String,
-      platform: {
-        type: String,
-        default: "web",
-      },
-    },
-    transactionId: {
-      type: String,
-      unique: true,
-      default: function () {
-        return (
-          "DON-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9)
-        );
-      },
-    },
-    processedAt: {
-      type: Date,
-      default: null,
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
@@ -82,6 +81,11 @@ donationSchema.index({ createdAt: -1 });
 donationSchema.index({ donor: 1, status: 1, createdAt: -1 });
 donationSchema.index({ transactionId: 1 });
 donationSchema.index({ donor: 1, recipient: 1 });
+
+// Virtual para verificar se é doação pública
+donationSchema.virtual("isPublic").get(function () {
+  return this.donorInfo?.privacy !== "private";
+});
 
 // Virtual para calcular tempo desde a criação
 donationSchema.virtual("timeAgo").get(function () {
@@ -232,6 +236,50 @@ donationSchema.post("save", async function (doc) {
   }
 });
 
+// Middleware pre-save para atualizar donorInfo e recipientInfo
+donationSchema.pre("save", async function (next) {
+  // 🔧 NOVO: Garantir que profilePhotoUrl seja salvo em donorInfo/recipientInfo
+  if (this.isNew || this.isModified("donor") || this.isModified("recipient")) {
+    const User = mongoose.model("User");
+
+    // Buscar donor se necessário
+    if (this.donor && (!this.donorInfo || !this.donorInfo.profilePhotoUrl)) {
+      const donor = await User.findById(this.donor).select(
+        "name fullName username avatar profilePhoto"
+      );
+      if (donor) {
+        this.donorInfo = {
+          name: donor.fullName || donor.name,
+          username: donor.username,
+          avatar: donor.avatar,
+          profilePhotoUrl: donor.profilePhotoUrl, // Virtual
+          privacy: this.donorInfo?.privacy || "public",
+        };
+      }
+    }
+
+    // Buscar recipient se necessário
+    if (
+      this.recipient &&
+      (!this.recipientInfo || !this.recipientInfo.profilePhotoUrl)
+    ) {
+      const recipient = await User.findById(this.recipient).select(
+        "name fullName username avatar profilePhoto"
+      );
+      if (recipient) {
+        this.recipientInfo = {
+          name: recipient.fullName || recipient.name,
+          username: recipient.username,
+          avatar: recipient.avatar,
+          profilePhotoUrl: recipient.profilePhotoUrl, // Virtual
+        };
+      }
+    }
+  }
+
+  next();
+});
+
 // Métodos estáticos
 donationSchema.statics.getUserDonationHistory = function (
   userId,
@@ -258,6 +306,57 @@ donationSchema.statics.getUserDonationHistory = function (
     .sort({ createdAt: -1 })
     .limit(limit)
     .skip(skip);
+};
+
+// Método estático para buscar doações com informações completas
+donationSchema.statics.findWithFullInfo = async function (query, options = {}) {
+  const { page = 1, limit = 20, sort = { createdAt: -1 } } = options;
+  const skip = (page - 1) * limit;
+
+  // 🔧 CORREÇÃO: Incluir profilePhoto no populate
+  const donations = await this.find(query)
+    .populate("donor", "name fullName username avatar profilePhoto")
+    .populate("recipient", "name fullName username avatar profilePhoto")
+    .sort(sort)
+    .limit(limit)
+    .skip(skip);
+
+  const total = await this.countDocuments(query);
+
+  // 🔧 NOVO: Processar para garantir profilePhotoUrl
+  const processedDonations = donations.map((donation) => {
+    const obj = donation.toObject();
+
+    // Adicionar profilePhotoUrl se não existir em donorInfo
+    if (obj.donor && !obj.donorInfo?.profilePhotoUrl) {
+      obj.donorInfo = {
+        ...obj.donorInfo,
+        profilePhotoUrl: obj.donor.profilePhotoUrl,
+      };
+    }
+
+    // Adicionar profilePhotoUrl se não existir em recipientInfo
+    if (obj.recipient && !obj.recipientInfo?.profilePhotoUrl) {
+      obj.recipientInfo = {
+        ...obj.recipientInfo,
+        profilePhotoUrl: obj.recipient.profilePhotoUrl,
+      };
+    }
+
+    return obj;
+  });
+
+  return {
+    donations: processedDonations,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+      hasNext: skip + limit < total,
+      hasPrev: page > 1,
+    },
+  };
 };
 
 donationSchema.statics.getDailyStats = function (date = new Date()) {
@@ -421,4 +520,36 @@ donationSchema.statics.getTopInteractions = function (
   ]);
 };
 
-module.exports = mongoose.model("Donation", donationSchema);
+// Método de instância para obter informações completas
+donationSchema.methods.getFullInfo = async function () {
+  await this.populate([
+    { path: "donor", select: "name fullName username avatar profilePhoto" },
+    { path: "recipient", select: "name fullName username avatar profilePhoto" },
+  ]);
+
+  return {
+    ...this.toObject(),
+    donor: {
+      ...this.donor?.toObject(),
+      profilePhotoUrl: this.donor?.profilePhotoUrl,
+    },
+    recipient: {
+      ...this.recipient?.toObject(),
+      profilePhotoUrl: this.recipient?.profilePhotoUrl,
+    },
+    donorInfo: {
+      ...this.donorInfo,
+      profilePhotoUrl:
+        this.donor?.profilePhotoUrl || this.donorInfo?.profilePhotoUrl,
+    },
+    recipientInfo: {
+      ...this.recipientInfo,
+      profilePhotoUrl:
+        this.recipient?.profilePhotoUrl || this.recipientInfo?.profilePhotoUrl,
+    },
+  };
+};
+
+const Donation = mongoose.model("Donation", donationSchema);
+
+module.exports = Donation;

@@ -13,7 +13,6 @@ class DonationController {
       const donorId = req.user.id;
       const { recipientId, amount, message } = req.body;
 
-      // 1. Validar dados de entrada
       const parsedAmount = parseInt(amount);
 
       if (parsedAmount <= 0) {
@@ -23,7 +22,6 @@ class DonationController {
         });
       }
 
-      // 2. Obter os usuários do doador e do receptor
       const [donorUser, recipientUser] = await Promise.all([
         User.findById(donorId),
         User.findById(recipientId),
@@ -36,7 +34,6 @@ class DonationController {
         });
       }
 
-      // 3. Verificar se o doador tem saldo suficiente
       if (!donorUser.hasEnoughCoins(parsedAmount)) {
         return res.status(400).json({
           success: false,
@@ -44,7 +41,7 @@ class DonationController {
         });
       }
 
-      // 4. Criar a doação no banco de dados
+      // 🔧 CORREÇÃO: Incluir profilePhotoUrl em donorInfo e recipientInfo
       const newDonation = new Donation({
         donor: donorUser._id,
         recipient: recipientUser._id,
@@ -52,47 +49,47 @@ class DonationController {
         message: message || "",
         status: "completed",
         donorInfo: {
-          name: donorUser.name,
+          name: donorUser.fullName || donorUser.name,
           username: donorUser.username,
           avatar: donorUser.avatar,
+          profilePhotoUrl: donorUser.profilePhotoUrl, // 🔧 NOVO
         },
         recipientInfo: {
-          name: recipientUser.name,
+          name: recipientUser.fullName || recipientUser.name,
           username: recipientUser.username,
           avatar: recipientUser.avatar,
+          profilePhotoUrl: recipientUser.profilePhotoUrl, // 🔧 NOVO
         },
       });
       await newDonation.save();
 
-      // 5. Atualizar saldos dos usuários
       await Promise.all([
         donorUser.updateCoins(-parsedAmount, "donation"),
         recipientUser.updateCoins(parsedAmount, "received"),
       ]);
 
-      // 6. 🔔 SISTEMA COMPLETO DE NOTIFICAÇÕES
+      // 🔧 CORREÇÃO: Incluir profilePhotoUrl nos dados de notificação
       const donationData = {
         donationId: newDonation._id,
         amount: parsedAmount,
         message: message || "",
         donor: {
           id: donorUser._id,
-          name: donorUser.name,
+          name: donorUser.fullName || donorUser.name,
           username: donorUser.username,
           avatar: donorUser.avatar,
+          profilePhotoUrl: donorUser.profilePhotoUrl, // 🔧 NOVO
         },
         newBalance: recipientUser.coins,
         timestamp: new Date().toISOString(),
       };
 
-      // 6.1. Criar notificação para o RECEPTOR (SEMPRE salva no banco)
       const recipientNotification =
         await Notification.createDonationReceivedNotification(
           recipientUser._id,
           donationData
         );
 
-      // 6.2. Criar notificação para o DOADOR (confirmação de envio)
       await Notification.createDonationSentNotification(donorUser._id, {
         donationId: newDonation._id,
         amount: parsedAmount,
@@ -100,7 +97,6 @@ class DonationController {
         newBalance: donorUser.coins,
       });
 
-      // 6.3. Tentar enviar via WebSocket (se receptor estiver online)
       const wsServer = req.app.get("wsServer");
       if (wsServer && recipientNotification) {
         const wasSent = wsServer.notifyDonationReceived(
@@ -108,13 +104,11 @@ class DonationController {
           donationData
         );
 
-        // Se WebSocket enviou com sucesso, marcar como exibida
         if (wasSent) {
           await recipientNotification.markAsDisplayed();
         }
       }
 
-      // 7. Retornar resposta de sucesso
       res.status(201).json({
         success: true,
         message: `Doação de ${parsedAmount} moedas realizada com sucesso!`,
