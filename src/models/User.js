@@ -601,19 +601,16 @@ userSchema.methods.profilePhotoExists = function () {
 // Método para calcular informações do nível
 userSchema.methods.calculateLevelInfo = function () {
   const levels = [
-    { name: "Iniciante", minXp: 0, maxXp: 100 },
-    { name: "Explorador", minXp: 101, maxXp: 500 },
-    { name: "Aventureiro", minXp: 501, maxXp: 1000 },
-    { name: "Contribuidor", minXp: 1001, maxXp: 2000 },
-    { name: "Benfeitor", minXp: 2001, maxXp: 3500 },
-    { name: "Generoso", minXp: 3501, maxXp: 5000 },
-    { name: "Expert", minXp: 5001, maxXp: 7500 },
-    { name: "Filantropo", minXp: 7501, maxXp: 10000 },
-    { name: "Magnata", minXp: 10001, maxXp: 15000 },
-    { name: "Mestre", minXp: 15001, maxXp: 25000 },
-    { name: "Lenda", minXp: 25001, maxXp: 50000 },
-    { name: "Mito", minXp: 50001, maxXp: 100000 },
-    { name: "Divino", minXp: 100001, maxXp: Infinity },
+    { name: "Iniciante", minXp: 0, maxXp: 199 },
+    { name: "Explorador", minXp: 200, maxXp: 499 },
+    { name: "Aventureiro", minXp: 500, maxXp: 999 },
+    { name: "Benfeitor", minXp: 1000, maxXp: 4999 },
+    { name: "Generoso", minXp: 5000, maxXp: 9999 },
+    { name: "Filantropo", minXp: 10000, maxXp: 49999 },
+    { name: "Magnata", minXp: 50000, maxXp: 99999 },
+    { name: "Lenda", minXp: 100000, maxXp: 499999 },
+    { name: "Mito", minXp: 500000, maxXp: 999999 },
+    { name: "Divino", minXp: 1000000, maxXp: Infinity },
   ];
 
   return levels.find(
