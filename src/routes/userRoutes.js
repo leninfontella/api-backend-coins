@@ -368,6 +368,20 @@ router.get(
   userController.getReceivedDonations
 );
 
+// DELETE /api/users/account - Excluir conta permanentemente
+router.delete(
+  "/account",
+  [
+    body("password").notEmpty().withMessage("Senha é obrigatória"),
+    body("confirmation")
+      .notEmpty()
+      .equals("EXCLUIR MINHA CONTA")
+      .withMessage("Confirmação incorreta"),
+  ],
+  validateRequest,
+  userController.deleteAccount
+);
+
 // ========== ROTAS ESPECÍFICAS POR ID (devem vir por último) ==========
 
 // GET /api/users/:userId - Obter detalhes de um usuário específico

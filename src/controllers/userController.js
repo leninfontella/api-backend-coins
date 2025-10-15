@@ -815,3 +815,184 @@ exports.getStats = async (req, res, next) => {
     next(error);
   }
 };
+
+// userController.js - Adicionar esta função
+
+/**
+ * Excluir conta do usuário permanentemente
+ * DELETE /api/users/account
+ */
+exports.deleteAccount = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const userId = req.user.id;
+    const { password, confirmation } = req.body;
+
+    // 1️⃣ VALIDAÇÕES DE SEGURANÇA
+    if (confirmation !== "EXCLUIR MINHA CONTA") {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message:
+          "Confirmação incorreta. Digite exatamente: EXCLUIR MINHA CONTA",
+      });
+    }
+
+    // 2️⃣ BUSCAR USUÁRIO E VALIDAR SENHA
+    const user = await User.findById(userId)
+      .select("+password")
+      .session(session);
+
+    if (!user) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Usuário não encontrado",
+      });
+    }
+
+    // Validar senha
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      await session.abortTransaction();
+      return res.status(401).json({
+        success: false,
+        message: "Senha incorreta",
+      });
+    }
+
+    console.log(`🗑️ Iniciando exclusão da conta: ${user.email}`);
+
+    // 3️⃣ BUSCAR ESTATÍSTICAS ANTES DE EXCLUIR
+    const Donation = require("../models/Donation");
+    const Notification = require("../models/Notification");
+
+    const [sentDonations, receivedDonations, notifications] = await Promise.all(
+      [
+        Donation.countDocuments({ donor: userId }).session(session),
+        Donation.countDocuments({ recipient: userId }).session(session),
+        Notification.countDocuments({ userId: userId }).session(session),
+      ]
+    );
+
+    // 4️⃣ EXCLUIR DADOS RELACIONADOS
+
+    // Excluir notificações do usuário
+    await Notification.deleteMany({ userId: userId }).session(session);
+    console.log(`   ✅ ${notifications} notificações excluídas`);
+
+    // Atualizar doações onde o usuário é doador (tornar anônimas)
+    await Donation.updateMany(
+      { donor: userId },
+      {
+        $set: {
+          donor: null,
+          donorDeleted: true,
+          isAnonymous: true,
+        },
+      }
+    ).session(session);
+    console.log(`   ✅ ${sentDonations} doações enviadas anonimizadas`);
+
+    // Atualizar doações onde o usuário é destinatário (tornar anônimas)
+    await Donation.updateMany(
+      { recipient: userId },
+      {
+        $set: {
+          recipient: null,
+          recipientDeleted: true,
+        },
+      }
+    ).session(session);
+    console.log(`   ✅ ${receivedDonations} doações recebidas anonimizadas`);
+
+    // 5️⃣ EXCLUIR FOTO DE PERFIL (SE EXISTIR)
+    if (user.profilePhoto && user.profilePhoto.path) {
+      try {
+        const fs = require("fs").promises;
+        const path = require("path");
+
+        if (user.profilePhoto.storage === "local") {
+          const filePath = path.join(__dirname, "..", user.profilePhoto.path);
+          await fs.unlink(filePath);
+          console.log(
+            `   ✅ Foto de perfil excluída: ${user.profilePhoto.filename}`
+          );
+        } else if (user.profilePhoto.storage === "gcs") {
+          // Se usar Google Cloud Storage
+          const { Storage } = require("@google-cloud/storage");
+          const storage = new Storage();
+          const bucket = storage.bucket(process.env.GCS_BUCKET_NAME);
+          await bucket.file(user.profilePhoto.path).delete();
+          console.log(`   ✅ Foto de perfil excluída do GCS`);
+        }
+      } catch (fileError) {
+        console.warn(
+          `   ⚠️ Erro ao excluir foto de perfil:`,
+          fileError.message
+        );
+        // Não abortar transação por erro na exclusão de arquivo
+      }
+    }
+
+    // 6️⃣ LIMPAR CACHE DO SERVIDOR (SE IMPLEMENTADO)
+    try {
+      const serverCache = require("../utils/serverCache");
+      if (user.profilePhoto && user.profilePhoto.path) {
+        serverCache.invalidate(user.profilePhoto.path);
+      }
+      console.log(`   ✅ Cache limpo`);
+    } catch (cacheError) {
+      console.warn(`   ⚠️ Erro ao limpar cache:`, cacheError.message);
+    }
+
+    // 7️⃣ EXCLUIR USUÁRIO DO BANCO
+    await User.findByIdAndDelete(userId).session(session);
+    console.log(`   ✅ Conta excluída do banco de dados`);
+
+    // 8️⃣ COMMIT DA TRANSAÇÃO
+    await session.commitTransaction();
+
+    // 9️⃣ LOG DE AUDITORIA
+    console.log(`
+╔════════════════════════════════════════════════════════════╗
+║  🗑️  CONTA EXCLUÍDA PERMANENTEMENTE                        ║
+╠════════════════════════════════════════════════════════════╣
+║  👤 Usuário: ${user.fullName || user.name}
+║  📧 Email: ${user.email}
+║  🆔 ID: ${userId}
+║  📅 Data: ${new Date().toISOString()}
+║  
+║  📊 Dados Removidos:
+║     • ${notifications} notificações
+║     • ${sentDonations} doações enviadas (anonimizadas)
+║     • ${receivedDonations} doações recebidas (anonimizadas)
+║     • 1 foto de perfil
+║     • 1 conta de usuário
+╚════════════════════════════════════════════════════════════╝
+    `);
+
+    // 🔟 RESPOSTA FINAL
+    res.json({
+      success: true,
+      message: "Conta excluída permanentemente",
+      data: {
+        deletedAt: new Date().toISOString(),
+        stats: {
+          notificationsDeleted: notifications,
+          donationsSentAnonymized: sentDonations,
+          donationsReceivedAnonymized: receivedDonations,
+        },
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("❌ Erro ao excluir conta:", error);
+
+    next(error);
+  } finally {
+    session.endSession();
+  }
+};
