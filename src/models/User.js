@@ -37,10 +37,6 @@ const userSchema = new mongoose.Schema(
       trim: true,
       maxlength: [20, "Telefone não pode ter mais de 20 caracteres"],
       default: "",
-      // match: [
-      //   /^(\+55\s?)?(\(?[1-9]{2}\)?\s?)?9?[0-9]{4}[-\s]?[0-9]{4}$/,
-      //   "Telefone inválido",
-      // ],
     },
 
     // ========== FOTO DE PERFIL ==========
@@ -48,7 +44,6 @@ const userSchema = new mongoose.Schema(
       filename: { type: String, default: null },
       path: { type: String, default: null },
       uploadDate: { type: Date, default: null },
-      // 🆕 NOVOS CAMPOS PARA GCS
       storage: {
         type: String,
         enum: ["local", "gcs", null],
@@ -80,7 +75,7 @@ const userSchema = new mongoose.Schema(
     // ========== SISTEMA DE MOEDAS E GAMIFICAÇÃO ==========
     coins: {
       type: Number,
-      default: 100, // Valor inicial do Claude
+      default: 100,
       min: [0, "Saldo não pode ser negativo"],
       max: [10000000, "Saldo máximo excedido"],
       validate: {
@@ -89,20 +84,17 @@ const userSchema = new mongoose.Schema(
       },
     },
 
-    // Sistema de levels expandido
+    // ✅ Sistema de levels baseado APENAS em totalDonated
     level: {
       type: String,
       enum: [
         "Iniciante",
         "Explorador",
         "Aventureiro",
-        "Contribuidor",
         "Benfeitor",
         "Generoso",
-        "Expert",
         "Filantropo",
         "Magnata",
-        "Mestre",
         "Lenda",
         "Mito",
         "Divino",
@@ -110,7 +102,7 @@ const userSchema = new mongoose.Schema(
       default: "Iniciante",
     },
 
-    // Experiência e progressão
+    // ✅ XP removido ou mantido separado (não afeta level)
     xp: {
       type: Number,
       default: 0,
@@ -121,7 +113,7 @@ const userSchema = new mongoose.Schema(
       default: 1000,
     },
 
-    // Métricas totais
+    // ✅ Métricas totais - totalDonated define o level
     totalDonated: {
       type: Number,
       default: 0,
@@ -141,7 +133,7 @@ const userSchema = new mongoose.Schema(
       },
     },
 
-    // Compatibilidade com o código do Claude
+    // Compatibilidade
     totalDonations: {
       type: Number,
       default: 0,
@@ -196,7 +188,7 @@ const userSchema = new mongoose.Schema(
         createdAt: {
           type: Date,
           default: Date.now,
-          expires: 604800, // 7 dias
+          expires: 604800,
         },
       },
     ],
@@ -204,15 +196,15 @@ const userSchema = new mongoose.Schema(
     // ========== ESTATÍSTICAS DETALHADAS ==========
     stats: {
       donationsSent: { type: Number, default: 0, min: 0 },
-      donationsCount: { type: Number, default: 0, min: 0 }, // Alias
+      donationsCount: { type: Number, default: 0, min: 0 },
       totalDonated: { type: Number, default: 0, min: 0 },
       donationsReceived: { type: Number, default: 0, min: 0 },
-      receivedCount: { type: Number, default: 0, min: 0 }, // Alias
+      receivedCount: { type: Number, default: 0, min: 0 },
       totalReceived: { type: Number, default: 0, min: 0 },
       lastDonationAt: Date,
-      lastDonationDate: Date, // Alias
+      lastDonationDate: Date,
       lastReceivedAt: Date,
-      lastReceivedDate: Date, // Alias
+      lastReceivedDate: Date,
       joinedDate: {
         type: Date,
         default: Date.now,
@@ -273,7 +265,6 @@ const userSchema = new mongoose.Schema(
     ipAddress: String,
     userAgent: String,
 
-    // Usuários bloqueados
     blockedUsers: [
       {
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -315,17 +306,12 @@ userSchema.virtual("firstName").get(function () {
   return this.name ? this.name.split(" ")[0] : "";
 });
 
-// Virtual para URL completa da foto - VERSÃO CORRIGIDA
-
 userSchema.virtual("profilePhotoUrl").get(function () {
-  // 🔧 CRÍTICO: Nunca retornar avatar/emoji aqui
   if (this.profilePhoto && this.profilePhoto.path) {
-    // Se for GCS, retorna a URL diretamente (já é pública)
     if (this.profilePhoto.storage === "gcs") {
-      return this.profilePhoto.path; // ✅ URL completa do GCS
+      return this.profilePhoto.path;
     }
 
-    // Se for local, constrói a URL relativa
     if (this.profilePhoto.path.startsWith("/uploads/")) {
       return this.profilePhoto.path;
     }
@@ -333,36 +319,34 @@ userSchema.virtual("profilePhotoUrl").get(function () {
     return `/uploads/profiles/${this.profilePhoto.filename}`;
   }
 
-  // 🔧 CORREÇÃO CRÍTICA: Retornar NULL em vez de avatar
-  // O avatar deve ser usado apenas no frontend como fallback
   return null;
 });
 
+// ✅ Progresso baseado no totalDonated para o próximo level
 userSchema.virtual("levelProgress").get(function () {
-  const level = this.calculateLevelInfo();
-  if (!level || level.maxXp === Infinity) return 100;
+  const levelInfo = this.calculateLevelInfo();
+  if (!levelInfo || levelInfo.max === Infinity) return 100;
 
-  const progress =
-    ((this.xp - level.minXp) / (level.maxXp - level.minXp)) * 100;
-  return Math.min(Math.max(progress, 0), 100);
+  const range = levelInfo.max - levelInfo.min + 1;
+  const current = this.totalDonated - levelInfo.min;
+  return Math.min(100, Math.max(0, (current / range) * 100));
 });
 
-userSchema.virtual("nextLevelXp").get(function () {
-  const level = this.calculateLevelInfo();
-  return level && level.maxXp !== Infinity ? level.maxXp : null;
+// ✅ Moedas necessárias para o próximo nível
+userSchema.virtual("coinsToNextLevel").get(function () {
+  const levelInfo = this.calculateLevelInfo();
+  if (!levelInfo || levelInfo.max === Infinity) return 0;
+  return Math.max(0, levelInfo.max + 1 - this.totalDonated);
 });
 
 // ========== MIDDLEWARE ==========
 userSchema.pre("save", function (next) {
-  // Validação apenas para fotos LOCAIS
   if (this.profilePhoto && this.profilePhoto.filename) {
-    // ✅ Se for GCS, NÃO validar localmente
     if (this.profilePhoto.storage === "gcs") {
       console.log(`✅ Foto no GCS, pulando validação local`);
       return next();
     }
 
-    // Validar apenas fotos locais antigas
     if (!this.profilePhotoExists()) {
       this.profilePhoto = {
         filename: null,
@@ -377,15 +361,12 @@ userSchema.pre("save", function (next) {
   next();
 });
 
-// Middleware para criptografar senha antes de salvar
 userSchema.pre("save", async function (next) {
-  // Apenas roda se o campo password foi modificado (ou é novo)
   if (!this.isModified("password")) {
     return next();
   }
 
   try {
-    // 10 é o custo de salting recomendado
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
     next();
@@ -395,9 +376,7 @@ userSchema.pre("save", async function (next) {
   }
 });
 
-// Middleware adicional para limpar dados de foto inválidos
 userSchema.pre("save", function (next) {
-  // Se há dados de foto mas o arquivo não existe, limpar os dados
   if (this.profilePhoto && this.profilePhoto.filename) {
     if (!this.profilePhotoExists()) {
       console.log(
@@ -414,9 +393,9 @@ userSchema.pre("save", function (next) {
   next();
 });
 
+// ✅ Atualizar level baseado APENAS em totalDonated
 userSchema.pre("save", function (next) {
   try {
-    // Garantir que valores não sejam negativos
     this.coins = Math.max(0, this.coins || 0);
     this.totalDonated = Math.max(0, this.totalDonated || 0);
     this.totalReceived = Math.max(0, this.totalReceived || 0);
@@ -431,17 +410,10 @@ userSchema.pre("save", function (next) {
     this.stats.receivedCount = this.stats.donationsReceived;
     this.stats.lastDonationDate = this.stats.lastDonationAt;
     this.stats.lastReceivedDate = this.stats.lastReceivedAt;
-
-    // Sincronizar totalDonations com totalDonated
     this.totalDonations = this.totalDonated;
 
-    // Atualizar level se necessário
-    if (
-      this.isModified("coins") ||
-      this.isModified("totalDonated") ||
-      this.isModified("xp") ||
-      this.isNew
-    ) {
+    // ✅ Atualizar level baseado APENAS em totalDonated
+    if (this.isModified("totalDonated") || this.isNew) {
       this.level = this.calculateLevel();
     }
 
@@ -458,7 +430,6 @@ userSchema.pre("findOneAndUpdate", function (next) {
 
 // ========== MÉTODOS DE INSTÂNCIA ==========
 
-// Método para comparar senha
 userSchema.methods.comparePassword = async function (candidatePassword) {
   try {
     return await bcrypt.compare(candidatePassword, this.password);
@@ -467,21 +438,18 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
   }
 };
 
-// Método para remover foto anterior
 userSchema.methods.removeOldProfilePhoto = async function () {
   if (this.profilePhoto && this.profilePhoto.filename) {
     try {
-      // 🆕 Se for GCS, deletar do GCS
       if (this.profilePhoto.storage === "gcs") {
         const gcsService = require("../services/gcsService");
         await gcsService.deleteImage(this.profilePhoto.filename);
         console.log(
-          `🗑️  Foto antiga removida do GCS: ${this.profilePhoto.filename}`
+          `🗑️ Foto antiga removida do GCS: ${this.profilePhoto.filename}`
         );
         return;
       }
 
-      // Se for local, deletar do sistema de arquivos
       const fs = require("fs");
       const path = require("path");
       const oldPath = path.join(
@@ -492,7 +460,7 @@ userSchema.methods.removeOldProfilePhoto = async function () {
 
       if (fs.existsSync(oldPath)) {
         fs.unlinkSync(oldPath);
-        console.log(`🗑️  Foto antiga removida: ${this.profilePhoto.filename}`);
+        console.log(`🗑️ Foto antiga removida: ${this.profilePhoto.filename}`);
       }
     } catch (error) {
       console.error("Erro ao remover foto antiga:", error);
@@ -515,15 +483,12 @@ userSchema.methods.migratePhotoToGCS = async function () {
 
       if (!fs.existsSync(localPath)) {
         console.log(
-          `⚠️  Arquivo local não encontrado para migração: ${this.profilePhoto.filename}`
+          `⚠️ Arquivo local não encontrado para migração: ${this.profilePhoto.filename}`
         );
         return false;
       }
 
-      // Ler arquivo local
       const imageBuffer = fs.readFileSync(localPath);
-
-      // Fazer upload para GCS
       const uploadResult = await gcsService.uploadImage(
         imageBuffer,
         this.profilePhoto.filename,
@@ -531,14 +496,11 @@ userSchema.methods.migratePhotoToGCS = async function () {
       );
 
       if (uploadResult.success) {
-        // Atualizar dados no banco
         this.profilePhoto.path = uploadResult.url;
         this.profilePhoto.storage = "gcs";
         this.profilePhoto.bucket = uploadResult.bucket;
 
         await this.save();
-
-        // Deletar arquivo local após sucesso
         fs.unlinkSync(localPath);
 
         console.log(`✅ Foto migrada para GCS: ${this.profilePhoto.filename}`);
@@ -554,7 +516,6 @@ userSchema.methods.migratePhotoToGCS = async function () {
   return false;
 };
 
-// Método adicional para obter URL da foto com domínio completo
 userSchema.methods.getProfilePhotoFullUrl = function (baseUrl) {
   if (this.profilePhoto && this.profilePhoto.filename) {
     const filename = this.profilePhoto.filename;
@@ -570,18 +531,15 @@ userSchema.methods.getProfilePhotoFullUrl = function (baseUrl) {
   return null;
 };
 
-// Método para verificar se a foto existe no sistema de arquivos
 userSchema.methods.profilePhotoExists = function () {
   if (!this.profilePhoto || !this.profilePhoto.filename) {
     return false;
   }
 
-  // 🔧 CRÍTICO: Se estiver no GCS, assumir que existe (não validar localmente)
   if (this.profilePhoto.storage === "gcs") {
-    return true; // ✅ GCS tem sua própria validação
+    return true;
   }
 
-  // Validar apenas arquivos locais
   const fs = require("fs");
   const path = require("path");
 
@@ -598,82 +556,97 @@ userSchema.methods.profilePhotoExists = function () {
   }
 };
 
-// Método para calcular informações do nível
+// ✅ NOVA FUNÇÃO: Calcular informações do level baseado em totalDonated
 userSchema.methods.calculateLevelInfo = function () {
-  const levels = [
-    { name: "Iniciante", minXp: 0, maxXp: 100 },
-    { name: "Explorador", minXp: 101, maxXp: 500 },
-    { name: "Aventureiro", minXp: 501, maxXp: 1000 },
-    { name: "Contribuidor", minXp: 1001, maxXp: 2000 },
-    { name: "Benfeitor", minXp: 2001, maxXp: 3500 },
-    { name: "Generoso", minXp: 3501, maxXp: 5000 },
-    { name: "Expert", minXp: 5001, maxXp: 7500 },
-    { name: "Filantropo", minXp: 7501, maxXp: 10000 },
-    { name: "Magnata", minXp: 10001, maxXp: 15000 },
-    { name: "Mestre", minXp: 15001, maxXp: 25000 },
-    { name: "Lenda", minXp: 25001, maxXp: 50000 },
-    { name: "Mito", minXp: 50001, maxXp: 100000 },
-    { name: "Divino", minXp: 100001, maxXp: Infinity },
-  ];
+  const levels = {
+    1: { min: 0, max: 199, name: "Iniciante", color: "#8B5CF6", icon: "🌱" },
+    2: { min: 200, max: 499, name: "Explorador", color: "#06B6D4", icon: "🔍" },
+    3: {
+      min: 500,
+      max: 999,
+      name: "Aventureiro",
+      color: "#10B981",
+      icon: "🎒",
+    },
+    4: {
+      min: 1000,
+      max: 4999,
+      name: "Benfeitor",
+      color: "#F59E0B",
+      icon: "🤝",
+    },
+    5: { min: 5000, max: 9999, name: "Generoso", color: "#EF4444", icon: "❤️" },
+    6: {
+      min: 10000,
+      max: 49999,
+      name: "Filantropo",
+      color: "#EC4899",
+      icon: "🏆",
+    },
+    7: {
+      min: 50000,
+      max: 99999,
+      name: "Magnata",
+      color: "#8B5CF6",
+      icon: "💎",
+    },
+    8: {
+      min: 100000,
+      max: 499999,
+      name: "Lenda",
+      color: "#06B6D4",
+      icon: "⭐",
+    },
+    9: { min: 500000, max: 999999, name: "Mito", color: "#F97316", icon: "🔥" },
+    10: {
+      min: 1000000,
+      max: Infinity,
+      name: "Divino",
+      color: "#FFD700",
+      icon: "👑",
+    },
+  };
 
-  return levels.find(
-    (level) => this.xp >= level.minXp && this.xp <= level.maxXp
-  );
-};
-
-// Método para calcular level baseado em múltiplos fatores
-userSchema.methods.calculateLevel = function () {
-  const donated = this.totalDonated || 0;
-  const coins = this.coins || 0;
-  const xp = this.xp || 0;
-
-  // Sistema híbrido: XP + wealth total
-  const totalWealth = coins + donated;
-  const levelInfo = this.calculateLevelInfo();
-
-  // Se XP define um nível mais alto que wealth, usar XP
-  if (levelInfo && levelInfo.name !== "Iniciante") {
-    return levelInfo.name;
+  for (let level = 1; level <= 10; level++) {
+    const levelInfo = levels[level];
+    if (
+      this.totalDonated >= levelInfo.min &&
+      this.totalDonated <= levelInfo.max
+    ) {
+      return { level, ...levelInfo };
+    }
   }
 
-  // Senão, usar sistema baseado em wealth
-  if (totalWealth >= 1000000) return "Divino";
-  if (totalWealth >= 500000) return "Mito";
-  if (totalWealth >= 100000) return "Lenda";
-  if (totalWealth >= 50000) return "Magnata";
-  if (totalWealth >= 25000) return "Mestre";
-  if (totalWealth >= 10000) return "Filantropo";
-  if (totalWealth >= 5000) return "Generoso";
-  if (totalWealth >= 2000) return "Benfeitor";
-  if (totalWealth >= 1000) return "Aventureiro";
-  if (totalWealth >= 500) return "Explorador";
+  return { level: 1, ...levels[1] };
+};
+
+// ✅ ATUALIZADO: Calcular level baseado APENAS em totalDonated
+userSchema.methods.calculateLevel = function () {
+  const donated = this.totalDonated || 0;
+
+  if (donated >= 1000000) return "Divino";
+  if (donated >= 500000) return "Mito";
+  if (donated >= 100000) return "Lenda";
+  if (donated >= 50000) return "Magnata";
+  if (donated >= 10000) return "Filantropo";
+  if (donated >= 5000) return "Generoso";
+  if (donated >= 1000) return "Benfeitor";
+  if (donated >= 500) return "Aventureiro";
+  if (donated >= 200) return "Explorador";
 
   return "Iniciante";
 };
 
-// Método para adicionar XP e verificar level up
+// ✅ MANTIDO: XP separado (não afeta level)
 userSchema.methods.addExperience = function (xpAmount) {
-  const oldLevel = this.level;
   this.xp += xpAmount;
-
-  const newLevelInfo = this.calculateLevelInfo();
-  const newLevel = this.calculateLevel();
-
-  if (newLevelInfo && newLevelInfo.maxXp !== Infinity) {
-    this.maxXp = newLevelInfo.maxXp;
-  }
-
-  this.level = newLevel;
-
   return {
-    levelUp: oldLevel !== newLevel,
-    oldLevel: oldLevel,
-    newLevel: newLevel,
     xpGained: xpAmount,
+    totalXp: this.xp,
   };
 };
 
-// Método atualizado para processar doações
+// ✅ ATUALIZADO: Processar doações e atualizar level
 userSchema.methods.updateCoins = async function (amount, operation = "other") {
   if (!Number.isInteger(amount)) {
     throw new Error("Quantidade deve ser um número inteiro");
@@ -683,36 +656,40 @@ userSchema.methods.updateCoins = async function (amount, operation = "other") {
     throw new Error("Saldo insuficiente para esta operação");
   }
 
+  const oldLevel = this.level;
   this.coins += amount;
 
   let xpGained = 0;
-  let levelResult = { levelUp: false };
+  let levelUp = false;
 
   if (operation === "donation" && amount < 0) {
     const donatedAmount = Math.abs(amount);
     this.totalDonated += donatedAmount;
-    this.totalDonations += donatedAmount; // Sincronização
+    this.totalDonations += donatedAmount;
     this.stats.donationsSent += 1;
     this.stats.totalDonated = this.totalDonated;
     this.stats.lastDonationAt = new Date();
 
-    // XP por doação: 1 XP por moeda doada
+    // XP por doação
     xpGained = donatedAmount;
-    levelResult = this.addExperience(xpGained);
+    this.addExperience(xpGained);
 
     // Score por doação
     this.score += Math.floor(donatedAmount * 1.5);
+
+    // ✅ Recalcular level baseado no novo totalDonated
+    const newLevel = this.calculateLevel();
+    levelUp = oldLevel !== newLevel;
+    this.level = newLevel;
   } else if (operation === "received" && amount > 0) {
     this.totalReceived += amount;
     this.stats.donationsReceived += 1;
     this.stats.totalReceived = this.totalReceived;
     this.stats.lastReceivedAt = new Date();
 
-    // XP menor para quem recebe: 0.5 XP por moeda
     xpGained = Math.floor(amount * 0.5);
-    levelResult = this.addExperience(xpGained);
+    this.addExperience(xpGained);
 
-    // Score por recebimento
     this.score += Math.floor(amount * 0.8);
   }
 
@@ -722,18 +699,16 @@ userSchema.methods.updateCoins = async function (amount, operation = "other") {
     success: true,
     newBalance: this.coins,
     xpGained: xpGained,
-    levelUp: levelResult.levelUp,
-    oldLevel: levelResult.oldLevel,
-    newLevel: levelResult.newLevel || this.level,
+    levelUp: levelUp,
+    oldLevel: oldLevel,
+    newLevel: this.level,
   };
 };
 
-// Método para verificar se tem saldo suficiente
 userSchema.methods.hasEnoughCoins = function (amount) {
   return this.coins >= amount;
 };
 
-// Método para verificar se pode doar
 userSchema.methods.canDonate = function (amount) {
   if (!Number.isInteger(amount) || amount <= 0) return false;
   if (this.status !== "active" || !this.isActive) return false;
@@ -745,17 +720,14 @@ userSchema.methods.canDonate = function (amount) {
   return true;
 };
 
-// Método para processar doação (compatibilidade)
 userSchema.methods.processDonation = async function (amount, toUserId) {
   return await this.updateCoins(-amount, "donation");
 };
 
-// Método para receber doação (compatibilidade)
 userSchema.methods.receiveDonation = async function (amount, fromUserId) {
   return await this.updateCoins(amount, "received");
 };
 
-// Método para obter total de doações do dia
 userSchema.methods.getDailyDonationTotal = async function () {
   try {
     const today = new Date();
@@ -787,14 +759,12 @@ userSchema.methods.getDailyDonationTotal = async function () {
   }
 };
 
-// Método para verificar se usuário está bloqueado
 userSchema.methods.isBlocked = function (userId) {
   return this.blockedUsers.some(
     (blocked) => blocked.user.toString() === userId.toString()
   );
 };
 
-// Método para validar integridade dos dados
 userSchema.methods.validateIntegrity = function () {
   const issues = [];
 
@@ -810,7 +780,6 @@ userSchema.methods.validateIntegrity = function () {
   };
 };
 
-// Método para obter dados públicos
 userSchema.methods.getPublicData = function () {
   return {
     id: this._id,
@@ -818,11 +787,11 @@ userSchema.methods.getPublicData = function () {
     name: this.name,
     username: this.username,
     email: this.email,
-    avatar: this.avatar, // 👤 Emoji para fallback no frontend
-    profilePhotoUrl: this.profilePhotoUrl, // ✅ NULL ou URL válida do GCS
+    avatar: this.avatar,
+    profilePhotoUrl: this.profilePhotoUrl,
     institution: this.institution,
     coins: this.coins,
-    balance: this.coins, // Alias
+    balance: this.coins,
     level: this.level,
     xp: this.xp,
     maxXp: this.maxXp,
@@ -835,12 +804,12 @@ userSchema.methods.getPublicData = function () {
     updatedAt: this.updatedAt,
   };
 };
+
 // ========== MÉTODOS ESTÁTICOS ==========
 
-// Ranking de usuários
 userSchema.statics.getRanking = function (limit = 100, skip = 0) {
   return this.find({ status: "active", isActive: true })
-    .sort({ score: -1, totalDonated: -1, coins: -1, name: 1 })
+    .sort({ totalDonated: -1, score: -1, coins: -1, name: 1 })
     .select(
       "name username fullName avatar profilePhotoUrl institution coins level xp score totalDonated totalReceived totalDonations stats createdAt"
     )
@@ -848,7 +817,6 @@ userSchema.statics.getRanking = function (limit = 100, skip = 0) {
     .skip(Math.max(0, skip));
 };
 
-// Método para obter posição no ranking
 userSchema.statics.getUserRank = async function (userId) {
   const user = await this.findById(userId);
   if (!user) return null;
@@ -857,11 +825,11 @@ userSchema.statics.getUserRank = async function (userId) {
     isActive: true,
     status: "active",
     $or: [
-      { score: { $gt: user.score } },
-      { score: user.score, totalDonated: { $gt: user.totalDonated } },
+      { totalDonated: { $gt: user.totalDonated } },
+      { totalDonated: user.totalDonated, score: { $gt: user.score } },
       {
-        score: user.score,
         totalDonated: user.totalDonated,
+        score: user.score,
         coins: { $gt: user.coins },
       },
     ],
@@ -870,7 +838,6 @@ userSchema.statics.getUserRank = async function (userId) {
   return rank + 1;
 };
 
-// Buscar usuários
 userSchema.statics.searchUsers = function (query, currentUserId, options = {}) {
   const { limit = 20, skip = 0 } = options;
 
@@ -899,12 +866,11 @@ userSchema.statics.searchUsers = function (query, currentUserId, options = {}) {
     .select(
       "name fullName username avatar profilePhotoUrl institution coins level xp score stats totalDonated totalReceived totalDonations"
     )
-    .sort({ score: -1, coins: -1, totalDonated: -1, name: 1 })
+    .sort({ totalDonated: -1, score: -1, coins: -1, name: 1 })
     .limit(Math.min(limit, 100))
     .skip(Math.max(0, skip));
 };
 
-// Método para corrigir dados inconsistentes
 userSchema.statics.fixDataIntegrity = async function () {
   try {
     const users = await this.find({});
@@ -913,7 +879,6 @@ userSchema.statics.fixDataIntegrity = async function () {
     for (const user of users) {
       let needsUpdate = false;
 
-      // Corrigir valores negativos
       if (user.coins < 0) {
         user.coins = 0;
         needsUpdate = true;
@@ -935,7 +900,6 @@ userSchema.statics.fixDataIntegrity = async function () {
         needsUpdate = true;
       }
 
-      // Sincronizar stats
       if (user.stats.totalDonated !== user.totalDonated) {
         user.stats.totalDonated = user.totalDonated;
         needsUpdate = true;
@@ -945,9 +909,15 @@ userSchema.statics.fixDataIntegrity = async function () {
         needsUpdate = true;
       }
 
-      // Sincronizar totalDonations
       if (user.totalDonations !== user.totalDonated) {
         user.totalDonations = user.totalDonated;
+        needsUpdate = true;
+      }
+
+      // ✅ Recalcular level baseado em totalDonated
+      const correctLevel = user.calculateLevel();
+      if (user.level !== correctLevel) {
+        user.level = correctLevel;
         needsUpdate = true;
       }
 
