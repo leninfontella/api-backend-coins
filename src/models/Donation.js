@@ -7,11 +7,21 @@ const donationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: [true, "Usuário doador é obrigatório"],
+      default: null, // Permitir null quando conta é excluída
     },
     recipient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: [true, "Usuário receptor é obrigatório"],
+      default: null, // Permitir null quando conta é excluída
+    },
+    donorDeleted: {
+      type: Boolean,
+      default: false,
+    },
+    recipientDeleted: {
+      type: Boolean,
+      default: false,
     },
     amount: {
       type: Number,
