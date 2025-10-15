@@ -600,48 +600,53 @@ userSchema.methods.profilePhotoExists = function () {
 
 // Método para calcular informações do nível
 userSchema.methods.calculateLevelInfo = function () {
-  // 1. Usar o campo totalDonated
-  const donatedAmount = this.totalDonated || 0;
-
-  // Níveis baseados em moedas doadas (totalDonated)
   const levels = [
-    // As chaves minXp e maxXp são mantidas apenas por retrocompatibilidade
-    // com os virtuais `levelProgress` e `nextLevelXp`, mas seus valores
-    // agora representam o total de moedas doadas.
-    { name: "Iniciante", minXp: 0, maxXp: 499 },
-    { name: "Explorador", minXp: 500, maxXp: 999 },
-    { name: "Aventureiro", minXp: 1000, maxXp: 1999 },
-    { name: "Benfeitor", minXp: 2000, maxXp: 4999 },
-    { name: "Generoso", minXp: 5000, maxXp: 9999 },
-    { name: "Filantropo", minXp: 10000, maxXp: 49999 },
-    { name: "Magnata", minXp: 50000, maxXp: 99999 },
-    { name: "Mestre", minXp: 100000, maxXp: 499999 }, // Ajustei o nome do nível e os limites
-    { name: "Lenda", minXp: 500000, maxXp: 999999 },
-    { name: "Mito", minXp: 1000000, maxXp: 4999999 },
-    { name: "Divino", minXp: 5000000, maxXp: Infinity },
+    { name: "Iniciante", minXp: 0, maxXp: 100 },
+    { name: "Explorador", minXp: 101, maxXp: 500 },
+    { name: "Aventureiro", minXp: 501, maxXp: 1000 },
+    { name: "Contribuidor", minXp: 1001, maxXp: 2000 },
+    { name: "Benfeitor", minXp: 2001, maxXp: 3500 },
+    { name: "Generoso", minXp: 3501, maxXp: 5000 },
+    { name: "Expert", minXp: 5001, maxXp: 7500 },
+    { name: "Filantropo", minXp: 7501, maxXp: 10000 },
+    { name: "Magnata", minXp: 10001, maxXp: 15000 },
+    { name: "Mestre", minXp: 15001, maxXp: 25000 },
+    { name: "Lenda", minXp: 25001, maxXp: 50000 },
+    { name: "Mito", minXp: 50001, maxXp: 100000 },
+    { name: "Divino", minXp: 100001, maxXp: Infinity },
   ];
 
-  // 2. Buscar o nível com base no totalDonated
   return levels.find(
-    (level) => donatedAmount >= level.minXp && donatedAmount <= level.maxXp
+    (level) => this.xp >= level.minXp && this.xp <= level.maxXp
   );
 };
 
 // Método para calcular level baseado em múltiplos fatores
 userSchema.methods.calculateLevel = function () {
-  const totalDonated = this.totalDonated || 0;
+  const donated = this.totalDonated || 0;
+  const coins = this.coins || 0;
+  const xp = this.xp || 0;
 
-  // Níveis baseados apenas no total doado
-  if (totalDonated >= 5000000) return "Divino";
-  if (totalDonated >= 1000000) return "Mito";
-  if (totalDonated >= 500000) return "Lenda";
-  if (totalDonated >= 100000) return "Magnata";
-  if (totalDonated >= 50000) return "Mestre";
-  if (totalDonated >= 25000) return "Filantropo";
-  if (totalDonated >= 10000) return "Generoso";
-  if (totalDonated >= 5000) return "Benfeitor";
-  if (totalDonated >= 2000) return "Aventureiro";
-  if (totalDonated >= 500) return "Explorador";
+  // Sistema híbrido: XP + wealth total
+  const totalWealth = coins + donated;
+  const levelInfo = this.calculateLevelInfo();
+
+  // Se XP define um nível mais alto que wealth, usar XP
+  if (levelInfo && levelInfo.name !== "Iniciante") {
+    return levelInfo.name;
+  }
+
+  // Senão, usar sistema baseado em wealth
+  if (totalWealth >= 1000000) return "Divino";
+  if (totalWealth >= 500000) return "Mito";
+  if (totalWealth >= 100000) return "Lenda";
+  if (totalWealth >= 50000) return "Magnata";
+  if (totalWealth >= 25000) return "Mestre";
+  if (totalWealth >= 10000) return "Filantropo";
+  if (totalWealth >= 5000) return "Generoso";
+  if (totalWealth >= 2000) return "Benfeitor";
+  if (totalWealth >= 1000) return "Aventureiro";
+  if (totalWealth >= 500) return "Explorador";
 
   return "Iniciante";
 };
