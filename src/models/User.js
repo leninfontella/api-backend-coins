@@ -38,6 +38,14 @@ const userSchema = new mongoose.Schema(
       maxlength: [20, "Telefone não pode ter mais de 20 caracteres"],
       default: "",
     },
+    cpf: {
+      type: String,
+      required: [true, "CPF é obrigatório"],
+      unique: true, // Garante que não há CPFs duplicados
+      trim: true,
+      minlength: [11, "CPF deve ter 11 dígitos"],
+      maxlength: [14, "CPF não pode exceder 14 caracteres"], // Se for salvar com máscara
+    },
 
     // ========== FOTO DE PERFIL ==========
     profilePhoto: {

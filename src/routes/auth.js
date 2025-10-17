@@ -9,6 +9,11 @@ router.post(
   [
     check("name", "Nome é obrigatório").trim().notEmpty(),
     check("email", "Email inválido").isEmail().normalizeEmail(),
+    check("cpf", "CPF inválido ou não fornecido")
+      .trim()
+      .notEmpty()
+      .isLength({ min: 11, max: 14 }) // Ajuste min/max conforme sua regra de negócio (com ou sem máscara)
+      .withMessage("CPF deve ter entre 11 e 14 caracteres"),
     check("phone")
       .optional({ checkFalsy: true })
       .trim()

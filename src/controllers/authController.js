@@ -26,12 +26,12 @@ exports.register = async (req, res, next) => {
   if (!errors.isEmpty())
     return res.status(400).json({ errors: errors.array() });
 
-  const { name, email, phone, password } = req.body;
+  const { name, email, phone, password, cpf } = req.body;
   try {
     const exists = await User.findOne({ email });
     if (exists) return res.status(409).json({ message: "Email já cadastrado" });
 
-    const user = new User({ name, email, phone, password });
+    const user = new User({ name, email, phone, password, cpf });
     await user.save();
 
     const accessToken = createAccessToken(user._id);
@@ -52,6 +52,7 @@ exports.register = async (req, res, next) => {
       name: user.name,
       fullName: user.fullName || user.name,
       email: user.email,
+      cpf: user.cpf,
       phone: user.phone || "",
       avatar: user.avatar,
       institution: user.institution,
@@ -77,6 +78,7 @@ exports.register = async (req, res, next) => {
     console.log("✅ Registro bem-sucedido:", {
       userId: user._id,
       email: user.email,
+      cpf: user.cpf,
       hasPhoto: !!userData.profilePhotoUrl,
       photoUrl: userData.profilePhotoUrl,
     });
