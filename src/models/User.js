@@ -38,6 +38,22 @@ const userSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       maxlength: [20, "Telefone não pode ter mais de 20 caracteres"],
+
+      set: function (value) {
+        if (!value) return value;
+        // Remove tudo exceto dígitos
+        return value.replace(/\D/g, "");
+      },
+
+      // 🔧 ADICIONAR: Validação de dígitos
+      validate: {
+        validator: function (v) {
+          if (!v) return true; // Se não obrigatório
+          const digits = v.replace(/\D/g, "");
+          return digits.length >= 10 && digits.length <= 11;
+        },
+        message: "Telefone deve ter 10 ou 11 dígitos",
+      },
     },
 
     cpf: {

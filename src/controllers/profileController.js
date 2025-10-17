@@ -5,6 +5,11 @@ const fs = require("fs");
 // 🆕 IMPORT DO SERVIÇO GCS
 const gcsService = require("../services/gcsService");
 
+function cleanPhoneNumber(phone) {
+  if (!phone) return "";
+  return phone.replace(/\D/g, ""); // Remove tudo exceto dígitos
+}
+
 const profileController = {
   // Atualizar perfil completo (com validação de proprietário)
   async updateProfile(req, res) {
