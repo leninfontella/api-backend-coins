@@ -103,11 +103,12 @@ const profileController = {
 
       // 🔧 CORREÇÃO CRÍTICA: Atualizar telefone mesmo se vazio
       if (phone !== undefined) {
-        const cleanPhone = phone.trim();
-        if (cleanPhone !== user.phone) {
+        const cleanPhone = cleanPhoneNumber(phone); // ✅ Usar função
+        const currentCleanPhone = cleanPhoneNumber(user.phone);
+
+        if (cleanPhone !== currentCleanPhone) {
           user.phone = cleanPhone;
           hasChanges = true;
-          console.log("✅ Telefone atualizado:", user.phone);
         }
       }
 
