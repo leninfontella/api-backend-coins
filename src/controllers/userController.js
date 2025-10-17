@@ -25,6 +25,7 @@ exports.getProfile = async (req, res, next) => {
           displayName: user.fullName || user.name, // Adicionar displayName
           email: user.email,
           phone: user.phone,
+          cpf: user.cpf,
           coins: user.coins,
           balance: user.coins, // Compatibilidade
           level: user.level,
@@ -251,6 +252,7 @@ exports.getUserById = async (req, res, next) => {
           displayName: user.fullName || user.name,
           email: user.email,
           phone: user.phone,
+          cpf: user.cpf,
           username: user.username,
           coins: user.coins,
           level: user.level,

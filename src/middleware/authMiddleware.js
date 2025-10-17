@@ -94,6 +94,7 @@ const authMiddleware = async (req, res, next) => {
         name: req.user.name,
         email: req.user.email,
         phone: req.user.phone,
+        cpf: req.user.cpf,
       });
     }
 

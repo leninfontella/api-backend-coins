@@ -10,9 +10,14 @@ const profileController = {
   async updateProfile(req, res) {
     try {
       const userId = req.user.id;
-      const { name, email, phone } = req.body;
+      const { name, email, phone, cpf } = req.body;
 
-      console.log("📥 Dados recebidos no backend:", { name, email, phone });
+      console.log("📥 Dados recebidos no backend:", {
+        name,
+        email,
+        phone,
+        cpf,
+      });
 
       // Buscar usuário atual
       const user = await User.findById(userId);
@@ -101,6 +106,12 @@ const profileController = {
         }
       }
 
+      if (cpf && cpf.trim() && cpf.trim() !== user.cpf) {
+        user.cpf = cpf.trim();
+        hasChanges = true;
+        console.log("✅ CPF atualizado:", user.cpf);
+      }
+
       // 🔧 CORREÇÃO CRÍTICA: Sempre salvar, mesmo sem mudanças de texto (pode ter foto)
       if (hasChanges || req.processedImage) {
         await user.save();
@@ -115,6 +126,7 @@ const profileController = {
         name: user.name,
         fullName: user.fullName || user.name,
         email: user.email,
+        cpf: user.cpf,
         phone: user.phone || "",
         profilePhotoUrl: user.profilePhotoUrl, // 🆕 Virtual que retorna URL do GCS
         avatar: user.avatar,
@@ -418,6 +430,7 @@ const profileController = {
         name: user.name,
         fullName: user.fullName || user.name,
         email: user.email,
+        cpf: user.cpf,
         phone: user.phone || "",
         profilePhotoUrl: user.profilePhotoUrl, // 🔧 Virtual que retorna URL do GCS ou null
         avatar: user.avatar, // Emoji para fallback
