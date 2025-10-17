@@ -31,6 +31,11 @@ exports.register = async (req, res, next) => {
     const exists = await User.findOne({ email });
     if (exists) return res.status(409).json({ message: "Email já cadastrado" });
 
+    const cpfExists = await User.findOne({ cpf });
+    if (cpfExists) {
+      return res.status(409).json({ message: "CPF já cadastrado" });
+    }
+
     const user = new User({ name, email, phone, password, cpf });
     await user.save();
 
