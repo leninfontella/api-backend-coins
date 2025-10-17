@@ -34,10 +34,12 @@ const userSchema = new mongoose.Schema(
     },
     phone: {
       type: String,
+      required: [true, "Telefone é obrigatório"],
+      unique: true,
       trim: true,
       maxlength: [20, "Telefone não pode ter mais de 20 caracteres"],
-      default: "",
     },
+
     cpf: {
       type: String,
       required: [true, "CPF é obrigatório"],

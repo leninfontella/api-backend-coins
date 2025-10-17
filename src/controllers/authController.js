@@ -29,11 +29,17 @@ exports.register = async (req, res, next) => {
   const { name, email, phone, password, cpf } = req.body;
   try {
     const exists = await User.findOne({ email });
-    if (exists) return res.status(409).json({ message: "Email já cadastrado" });
+    if (exists)
+      return res.status(409).json({ message: "Email já cadastrado!" });
 
     const cpfExists = await User.findOne({ cpf });
     if (cpfExists) {
-      return res.status(409).json({ message: "CPF já cadastrado" });
+      return res.status(409).json({ message: "CPF já cadastrado!" });
+    }
+
+    const phoneExists = await User.findOne({ phone });
+    if (phoneExists) {
+      return res.status(409).json({ message: "Telefone já cadastrado!" });
     }
 
     const user = new User({ name, email, phone, password, cpf });
@@ -101,8 +107,28 @@ exports.register = async (req, res, next) => {
     });
   } catch (err) {
     console.error("❌ Erro no registro:", err);
-    if (err.code === 11000)
-      return res.status(409).json({ message: "Email já cadastrado" });
+    if (err.code === 11000) {
+      // Verifica qual campo causou a violação de unicidade
+      if (err.keyValue.email) {
+        return res.status(409).json({ message: "Email já cadastrado" });
+      }
+      if (err.keyValue.cpf) {
+        // ✅ TRATAMENTO CPF
+        return res.status(409).json({ message: "CPF já cadastrado!" });
+      }
+      if (err.keyValue.phone) {
+        // ✅ TRATAMENTO PHONE
+        return res.status(409).json({ message: "Telefone já cadastrado!" });
+      }
+    }
+
+    // Trata outros erros de validação do Mongoose (ex: required)
+    if (err.name === "ValidationError") {
+      return res
+        .status(400)
+        .json({ message: "Erro de validação: " + err.message });
+    }
+
     next(err);
   }
 };
