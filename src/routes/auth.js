@@ -3,9 +3,12 @@ const router = express.Router();
 const { check } = require("express-validator");
 const authController = require("../controllers/authController");
 const protect = require("../middleware/authMiddleware");
+const multer = require("multer");
+const upload = multer();
 
 router.post(
   "/register",
+  upload.none(),
   [
     check("name", "Nome é obrigatório").trim().notEmpty(),
     check("email", "Email inválido").isEmail().normalizeEmail(),
