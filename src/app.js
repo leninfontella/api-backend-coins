@@ -19,6 +19,7 @@ const profileRoutes = require("./routes/profileRoutes");
 const badgesRoutes = require("./routes/badgesRoutes"); // NOVO
 const errorHandler = require("./middleware/errorHandler");
 const notificationRoutes = require("./routes/notificationRoutes");
+const cronRoutes = require("./routes/cronRoutes");
 
 const app = express();
 
@@ -195,6 +196,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/profile", profileRoutes);
 app.use("/api/badges", badgesRoutes); // NOVO
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/cron", cronRoutes);
 
 // ROTAS DE CACHE COM AUTENTICAÇÃO
 const authMiddleware = require("./middleware/authMiddleware");
