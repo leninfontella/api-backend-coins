@@ -8,20 +8,17 @@ const upload = multer();
 
 router.post(
   "/register",
-  upload.none(),
   [
     check("name", "Nome é obrigatório").trim().notEmpty(),
     check("email", "Email inválido").isEmail().normalizeEmail(),
     check("cpf", "CPF inválido ou não fornecido")
       .trim()
       .notEmpty()
-      .isLength({ min: 11, max: 14 }) // Ajuste min/max conforme sua regra de negócio (com ou sem máscara)
-      .withMessage("CPF deve ter entre 11 e 14 caracteres"),
+      .isLength({ min: 11, max: 14 }),
     check("phone")
       .optional({ checkFalsy: true })
       .trim()
-      .isLength({ min: 10, max: 20 })
-      .withMessage("Telefone deve ter entre 10 e 20 caracteres"),
+      .isLength({ min: 10, max: 20 }),
     check("password", "Senha com mínimo de 8 caracteres").isLength({ min: 8 }),
     check("confirmPassword").custom((value, { req }) => {
       if (value !== req.body.password)
