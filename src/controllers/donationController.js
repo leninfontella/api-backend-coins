@@ -258,8 +258,8 @@ class DonationController {
       const userId = req.user.id;
 
       const donation = await Donation.findById(donationId)
-        .populate("donor", "name username avatar")
-        .populate("recipient", "name username avatar");
+        .populate("donor", "name fullName username avatar profilePhoto")
+        .populate("recipient", "name fullName username avatar profilePhoto");
 
       if (!donation) {
         return res.status(404).json({
@@ -268,10 +268,16 @@ class DonationController {
         });
       }
 
+      // 🔧 CORREÇÃO: Verificar se donor/recipient existem antes de acessar _id
+      const donorId =
+        donation.donor?._id?.toString() ||
+        (donation.donorDeleted ? "deleted" : null);
+      const recipientId =
+        donation.recipient?._id?.toString() ||
+        (donation.recipientDeleted ? "deleted" : null);
+
       // Verificar se usuário pode ver esta doação
-      const canView =
-        donation.donor._id.toString() === userId ||
-        donation.recipient._id.toString() === userId;
+      const canView = donorId === userId || recipientId === userId;
 
       if (!canView) {
         return res.status(403).json({
@@ -280,10 +286,80 @@ class DonationController {
         });
       }
 
+      // 🔧 CORREÇÃO: Formatar dados usando os métodos do modelo
+      const formattedDonation = {
+        _id: donation._id,
+        amount: donation.amount,
+        message: donation.message || "",
+        status: donation.status,
+        createdAt: donation.createdAt,
+        updatedAt: donation.updatedAt,
+        donorDeleted: donation.donorDeleted || false,
+        recipientDeleted: donation.recipientDeleted || false,
+        isAnonymous: donation.isAnonymous || false,
+
+        // Usar métodos do modelo para obter dados corretos
+        donor: donation.getDonorData
+          ? donation.getDonorData()
+          : {
+              _id: donorId,
+              name:
+                donation.donor?.fullName ||
+                donation.donor?.name ||
+                donation.donorSnapshot?.name ||
+                "Usuário Excluído",
+              fullName:
+                donation.donor?.fullName ||
+                donation.donor?.name ||
+                donation.donorSnapshot?.fullName ||
+                "Usuário Excluído",
+              avatar:
+                donation.donor?.avatar ||
+                donation.donorSnapshot?.avatar ||
+                "🔒",
+              username:
+                donation.donor?.username ||
+                donation.donorSnapshot?.username ||
+                null,
+              profilePhotoUrl:
+                donation.donor?.profilePhotoUrl ||
+                donation.donorSnapshot?.profilePhotoUrl ||
+                null,
+            },
+
+        recipient: donation.getRecipientData
+          ? donation.getRecipientData()
+          : {
+              _id: recipientId,
+              name:
+                donation.recipient?.fullName ||
+                donation.recipient?.name ||
+                donation.recipientSnapshot?.name ||
+                "Usuário Excluído",
+              fullName:
+                donation.recipient?.fullName ||
+                donation.recipient?.name ||
+                donation.recipientSnapshot?.fullName ||
+                "Usuário Excluído",
+              avatar:
+                donation.recipient?.avatar ||
+                donation.recipientSnapshot?.avatar ||
+                "🔒",
+              username:
+                donation.recipient?.username ||
+                donation.recipientSnapshot?.username ||
+                null,
+              profilePhotoUrl:
+                donation.recipient?.profilePhotoUrl ||
+                donation.recipientSnapshot?.profilePhotoUrl ||
+                null,
+            },
+      };
+
       res.json({
         success: true,
         data: {
-          donation,
+          donation: formattedDonation,
         },
       });
     } catch (error) {

@@ -254,37 +254,102 @@ class DonationService {
 
     query.status = "completed";
 
-    // 🔧 CORREÇÃO: Adicionar profilePhoto aos populates
     const donations = await Donation.find(query)
-      .populate("donor", "name fullName username avatar profilePhoto") // 🔧 NOVO
-      .populate("recipient", "name fullName username avatar profilePhoto") // 🔧 NOVO
+      .populate("donor", "name fullName username avatar profilePhoto")
+      .populate("recipient", "name fullName username avatar profilePhoto")
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip);
 
     const total = await Donation.countDocuments(query);
 
-    // 🔧 CORREÇÃO: Processar donations para incluir profilePhotoUrl
+    // 🔧 CORREÇÃO: Processar donations tratando usuários excluídos
     const processedDonations = donations.map((donation) => {
       const donationObj = donation.toObject ? donation.toObject() : donation;
 
+      // Verificar se usuários foram excluídos
+      const isDonorDeleted =
+        donation.donorDeleted ||
+        !donation.donor ||
+        donation.donor._id === "deleted";
+
+      const isRecipientDeleted =
+        donation.recipientDeleted ||
+        !donation.recipient ||
+        donation.recipient._id === "deleted";
+
+      // Criar dados do donor com fallback
+      const donorData = isDonorDeleted
+        ? {
+            _id: "deleted",
+            name:
+              donation.donorSnapshot?.fullName ||
+              donation.donorSnapshot?.name ||
+              "Usuário Excluído",
+            fullName:
+              donation.donorSnapshot?.fullName ||
+              donation.donorSnapshot?.name ||
+              "Usuário Excluído",
+            username: donation.donorSnapshot?.username || null,
+            avatar: donation.donorSnapshot?.avatar || "🔒",
+            profilePhotoUrl: donation.donorSnapshot?.profilePhotoUrl || null,
+          }
+        : {
+            _id: donation.donor._id,
+            name: donation.donor.fullName || donation.donor.name,
+            fullName: donation.donor.fullName || donation.donor.name,
+            username: donation.donor.username,
+            avatar: donation.donor.avatar || "👤",
+            profilePhotoUrl: donation.donor.profilePhotoUrl,
+          };
+
+      // Criar dados do recipient com fallback
+      const recipientData = isRecipientDeleted
+        ? {
+            _id: "deleted",
+            name:
+              donation.recipientSnapshot?.fullName ||
+              donation.recipientSnapshot?.name ||
+              "Usuário Excluído",
+            fullName:
+              donation.recipientSnapshot?.fullName ||
+              donation.recipientSnapshot?.name ||
+              "Usuário Excluído",
+            username: donation.recipientSnapshot?.username || null,
+            avatar: donation.recipientSnapshot?.avatar || "🔒",
+            profilePhotoUrl:
+              donation.recipientSnapshot?.profilePhotoUrl || null,
+          }
+        : {
+            _id: donation.recipient._id,
+            name: donation.recipient.fullName || donation.recipient.name,
+            fullName: donation.recipient.fullName || donation.recipient.name,
+            username: donation.recipient.username,
+            avatar: donation.recipient.avatar || "👤",
+            profilePhotoUrl: donation.recipient.profilePhotoUrl,
+          };
+
       return {
         ...donationObj,
-        donor: {
-          ...donationObj.donor,
-          profilePhotoUrl: donation.donor?.profilePhotoUrl, // Virtual
-        },
-        recipient: {
-          ...donationObj.recipient,
-          profilePhotoUrl: donation.recipient?.profilePhotoUrl, // Virtual
-        },
+        donorDeleted: isDonorDeleted,
+        recipientDeleted: isRecipientDeleted,
+        donor: donorData,
+        recipient: recipientData,
         donorInfo: {
           ...donationObj.donorInfo,
-          profilePhotoUrl: donation.donor?.profilePhotoUrl,
+          name: donorData.name,
+          fullName: donorData.fullName,
+          avatar: donorData.avatar,
+          username: donorData.username,
+          profilePhotoUrl: donorData.profilePhotoUrl,
         },
         recipientInfo: {
           ...donationObj.recipientInfo,
-          profilePhotoUrl: donation.recipient?.profilePhotoUrl,
+          name: recipientData.name,
+          fullName: recipientData.fullName,
+          avatar: recipientData.avatar,
+          username: recipientData.username,
+          profilePhotoUrl: recipientData.profilePhotoUrl,
         },
       };
     });
@@ -536,51 +601,85 @@ class DonationService {
    * Obter doações recentes (feed público)
    */
   async getRecentDonations(limit = 20, skip = 0) {
-    // 🔧 CORREÇÃO: Adicionar profilePhoto aos selects de populate
     const donations = await Donation.find({
       status: "completed",
       $expr: {
         $eq: [{ $ifNull: ["$donorInfo.privacy", "public"] }, "public"],
       },
     })
-      .populate("donor", "name fullName username avatar settings profilePhoto") // 🔧 NOVO
-      .populate("recipient", "name fullName username avatar profilePhoto") // 🔧 NOVO
+      .populate("donor", "name fullName username avatar settings profilePhoto")
+      .populate("recipient", "name fullName username avatar profilePhoto")
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip);
 
-    return donations.map((donation) => ({
-      _id: donation._id,
-      amount: donation.amount,
-      message: donation.message,
-      createdAt: donation.createdAt,
-      donor: {
-        _id: donation.donor._id,
-        name: donation.donor.fullName || donation.donor.name,
-        username: donation.donor.username,
-        avatar: donation.donor.avatar || "👤",
-        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO (virtual)
-      },
-      recipient: {
-        _id: donation.recipient._id,
-        name: donation.recipient.fullName || donation.recipient.name,
-        username: donation.recipient.username,
-        avatar: donation.recipient.avatar || "👤",
-        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
-      },
-      donorInfo: {
-        name: donation.donor.fullName || donation.donor.name,
-        username: donation.donor.username,
-        avatar: donation.donor.avatar || "👤",
-        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
-      },
-      recipientInfo: {
-        name: donation.recipient.fullName || donation.recipient.name,
-        username: donation.recipient.username,
-        avatar: donation.recipient.avatar || "👤",
-        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
-      },
-    }));
+    // 🔧 CORREÇÃO: Tratar usuários excluídos
+    return donations.map((donation) => {
+      // Verificar se usuários foram excluídos
+      const isDonorDeleted =
+        donation.donorDeleted ||
+        !donation.donor ||
+        donation.donor._id === "deleted";
+
+      const isRecipientDeleted =
+        donation.recipientDeleted ||
+        !donation.recipient ||
+        donation.recipient._id === "deleted";
+
+      // Dados do donor com fallback
+      const donorData = isDonorDeleted
+        ? {
+            _id: "deleted",
+            name:
+              donation.donorSnapshot?.fullName ||
+              donation.donorSnapshot?.name ||
+              "Usuário Excluído",
+            username: donation.donorSnapshot?.username || null,
+            avatar: donation.donorSnapshot?.avatar || "🔒",
+            profilePhotoUrl: donation.donorSnapshot?.profilePhotoUrl || null,
+          }
+        : {
+            _id: donation.donor._id,
+            name: donation.donor.fullName || donation.donor.name,
+            username: donation.donor.username,
+            avatar: donation.donor.avatar || "👤",
+            profilePhotoUrl: donation.donor.profilePhotoUrl,
+          };
+
+      // Dados do recipient com fallback
+      const recipientData = isRecipientDeleted
+        ? {
+            _id: "deleted",
+            name:
+              donation.recipientSnapshot?.fullName ||
+              donation.recipientSnapshot?.name ||
+              "Usuário Excluído",
+            username: donation.recipientSnapshot?.username || null,
+            avatar: donation.recipientSnapshot?.avatar || "🔒",
+            profilePhotoUrl:
+              donation.recipientSnapshot?.profilePhotoUrl || null,
+          }
+        : {
+            _id: donation.recipient._id,
+            name: donation.recipient.fullName || donation.recipient.name,
+            username: donation.recipient.username,
+            avatar: donation.recipient.avatar || "👤",
+            profilePhotoUrl: donation.recipient.profilePhotoUrl,
+          };
+
+      return {
+        _id: donation._id,
+        amount: donation.amount,
+        message: donation.message,
+        createdAt: donation.createdAt,
+        donorDeleted: isDonorDeleted,
+        recipientDeleted: isRecipientDeleted,
+        donor: donorData,
+        recipient: recipientData,
+        donorInfo: donorData,
+        recipientInfo: recipientData,
+      };
+    });
   }
 
   /**
@@ -681,6 +780,8 @@ class DonationService {
         $match: {
           status: "completed",
           createdAt: { $gte: startDate },
+          // 🔧 NOVO: Excluir doações de usuários deletados
+          donorDeleted: { $ne: true },
         },
       },
       {
@@ -712,10 +813,12 @@ class DonationService {
           _id: 0,
           user: {
             id: "$user._id",
-            name: "$user.name",
+            name: { $ifNull: ["$user.fullName", "$user.name"] },
             username: "$user.username",
             avatar: "$user.avatar",
             level: "$user.level",
+            // 🔧 NOVO: Incluir profilePhoto para virtual
+            profilePhoto: "$user.profilePhoto",
           },
           totalDonated: 1,
           donationCount: 1,
@@ -741,6 +844,8 @@ class DonationService {
         $match: {
           status: "completed",
           createdAt: { $gte: startDate },
+          // 🔧 NOVO: Excluir doações de usuários deletados
+          recipientDeleted: { $ne: true },
         },
       },
       {
@@ -771,10 +876,12 @@ class DonationService {
           _id: 0,
           user: {
             id: "$user._id",
-            name: "$user.name",
+            name: { $ifNull: ["$user.fullName", "$user.name"] },
             username: "$user.username",
             avatar: "$user.avatar",
             level: "$user.level",
+            // 🔧 NOVO: Incluir profilePhoto
+            profilePhoto: "$user.profilePhoto",
           },
           totalReceived: 1,
           donationCount: 1,

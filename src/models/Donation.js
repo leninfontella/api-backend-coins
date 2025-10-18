@@ -21,6 +21,23 @@ const donationSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    donorSnapshot: {
+      name: String,
+      fullName: String,
+      username: String,
+      avatar: String,
+      profilePhotoUrl: String,
+    },
+
+    recipientSnapshot: {
+      name: String,
+      fullName: String,
+      username: String,
+      avatar: String,
+      profilePhotoUrl: String,
+    },
+
     amount: {
       type: Number,
       required: [true, "Valor da doação é obrigatório"],
@@ -121,13 +138,17 @@ donationSchema.virtual("timeAgo").get(function () {
 // Middleware de validação pré-save
 donationSchema.pre("save", async function (next) {
   // Não permitir doação para si mesmo
-  if (this.donor.toString() === this.recipient.toString()) {
+  if (
+    this.donor &&
+    this.recipient &&
+    this.donor.toString() === this.recipient.toString()
+  ) {
     const error = new Error("Não é possível fazer doação para si mesmo");
     return next(error);
   }
 
-  // Verificar se o usuário tem moedas suficientes (apenas para novas doações)
-  if (this.isNew) {
+  // Verificar saldo (apenas para novas doações)
+  if (this.isNew && this.donor) {
     const User = mongoose.model("User");
     const donorUser = await User.findById(this.donor);
 
@@ -142,12 +163,54 @@ donationSchema.pre("save", async function (next) {
     }
   }
 
-  // 🔧 CORREÇÃO: Popular informações dos usuários COM profilePhotoUrl
+  // 🆕 ADICIONAR: Salvar snapshots ao criar doação
+  if (this.isNew) {
+    try {
+      const User = mongoose.model("User");
+
+      // Snapshot do donor
+      if (this.donor) {
+        const donor = await User.findById(this.donor).select(
+          "name fullName username avatar profilePhoto"
+        );
+
+        if (donor) {
+          this.donorSnapshot = {
+            name: donor.name,
+            fullName: donor.fullName || donor.name,
+            username: donor.username,
+            avatar: donor.avatar,
+            profilePhotoUrl: donor.profilePhotoUrl,
+          };
+        }
+      }
+
+      // Snapshot do recipient
+      if (this.recipient) {
+        const recipient = await User.findById(this.recipient).select(
+          "name fullName username avatar profilePhoto"
+        );
+
+        if (recipient) {
+          this.recipientSnapshot = {
+            name: recipient.name,
+            fullName: recipient.fullName || recipient.name,
+            username: recipient.username,
+            avatar: recipient.avatar,
+            profilePhotoUrl: recipient.profilePhotoUrl,
+          };
+        }
+      }
+    } catch (error) {
+      console.error("Erro ao salvar snapshot de usuários:", error);
+    }
+  }
+
+  // Popular informações dos usuários (mantém seu código existente)
   if (this.isNew || this.isModified("donor") || this.isModified("recipient")) {
     try {
       const User = mongoose.model("User");
 
-      // 🔧 CORREÇÃO: Incluir profilePhoto no select para obter o virtual
       const [donor, recipient] = await Promise.all([
         User.findById(this.donor).select(
           "name fullName username avatar profilePhoto"
@@ -159,19 +222,19 @@ donationSchema.pre("save", async function (next) {
 
       if (donor) {
         this.donorInfo = {
-          name: donor.fullName || donor.name, // 🔧 Priorizar fullName
+          name: donor.fullName || donor.name,
           username: donor.username,
           avatar: donor.avatar,
-          profilePhotoUrl: donor.profilePhotoUrl, // 🔧 NOVO - Virtual do modelo User
+          profilePhotoUrl: donor.profilePhotoUrl,
         };
       }
 
       if (recipient) {
         this.recipientInfo = {
-          name: recipient.fullName || recipient.name, // 🔧 Priorizar fullName
+          name: recipient.fullName || recipient.name,
           username: recipient.username,
           avatar: recipient.avatar,
-          profilePhotoUrl: recipient.profilePhotoUrl, // 🔧 NOVO - Virtual do modelo User
+          profilePhotoUrl: recipient.profilePhotoUrl,
         };
       }
     } catch (error) {
@@ -179,7 +242,7 @@ donationSchema.pre("save", async function (next) {
     }
   }
 
-  // Definir processedAt quando status muda para completed
+  // Definir processedAt quando completo
   if (
     this.isModified("status") &&
     this.status === "completed" &&
@@ -594,6 +657,194 @@ donationSchema.statics.migrateOldDonations = async function (batchSize = 100) {
     `✅ Migração concluída: ${updated} de ${processed} doações atualizadas`
   );
   return { processed, updated };
+};
+
+// 🆕 Método para buscar doações tratando usuários excluídos
+donationSchema.statics.findWithDeletedUsers = async function (
+  query,
+  options = {}
+) {
+  const { page = 1, limit = 20, sort = { createdAt: -1 } } = options;
+  const skip = (page - 1) * limit;
+
+  // Buscar doações
+  const donations = await this.find(query)
+    .populate("donor", "name fullName username avatar profilePhoto")
+    .populate("recipient", "name fullName username avatar profilePhoto")
+    .sort(sort)
+    .limit(limit)
+    .skip(skip);
+
+  const total = await this.countDocuments(query);
+
+  // Processar doações para tratar usuários excluídos
+  const processedDonations = donations.map((donation) => {
+    const obj = donation.toObject();
+
+    // 🔧 Tratar donor excluído
+    if (!obj.donor && obj.donorDeleted && obj.donorSnapshot) {
+      obj.donor = {
+        _id: "deleted",
+        name:
+          obj.donorSnapshot.fullName ||
+          obj.donorSnapshot.name ||
+          "Usuário Excluído",
+        fullName:
+          obj.donorSnapshot.fullName ||
+          obj.donorSnapshot.name ||
+          "Usuário Excluído",
+        avatar: obj.donorSnapshot.avatar || "🔒",
+        username: obj.donorSnapshot.username || null,
+        profilePhotoUrl: obj.donorSnapshot.profilePhotoUrl || null,
+      };
+      obj.donorInfo = obj.donor;
+    }
+
+    // 🔧 Tratar recipient excluído
+    if (!obj.recipient && obj.recipientDeleted && obj.recipientSnapshot) {
+      obj.recipient = {
+        _id: "deleted",
+        name:
+          obj.recipientSnapshot.fullName ||
+          obj.recipientSnapshot.name ||
+          "Usuário Excluído",
+        fullName:
+          obj.recipientSnapshot.fullName ||
+          obj.recipientSnapshot.name ||
+          "Usuário Excluído",
+        avatar: obj.recipientSnapshot.avatar || "🔒",
+        username: obj.recipientSnapshot.username || null,
+        profilePhotoUrl: obj.recipientSnapshot.profilePhotoUrl || null,
+      };
+      obj.recipientInfo = obj.recipient;
+    }
+
+    // Garantir que donorInfo e recipientInfo tenham profilePhotoUrl
+    if (obj.donor && !obj.donorInfo?.profilePhotoUrl) {
+      obj.donorInfo = {
+        ...obj.donorInfo,
+        profilePhotoUrl: obj.donor.profilePhotoUrl,
+      };
+    }
+
+    if (obj.recipient && !obj.recipientInfo?.profilePhotoUrl) {
+      obj.recipientInfo = {
+        ...obj.recipientInfo,
+        profilePhotoUrl: obj.recipient.profilePhotoUrl,
+      };
+    }
+
+    return obj;
+  });
+
+  return {
+    donations: processedDonations,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+      hasNext: skip + limit < total,
+      hasPrev: page > 1,
+    },
+  };
+};
+
+// 🆕 Método helper para obter dados do usuário (mesmo se excluído)
+donationSchema.methods.getDonorData = function () {
+  if (this.donor && !this.donorDeleted) {
+    return {
+      _id: this.donor._id || this.donor,
+      name: this.donor.fullName || this.donor.name || this.donorInfo?.name,
+      fullName: this.donor.fullName || this.donor.name || this.donorInfo?.name,
+      avatar: this.donor.avatar || this.donorInfo?.avatar || "👤",
+      username: this.donor.username || this.donorInfo?.username,
+      profilePhotoUrl:
+        this.donor.profilePhotoUrl || this.donorInfo?.profilePhotoUrl,
+      deleted: false,
+    };
+  }
+
+  // Usuário excluído - usar snapshot
+  if (this.donorDeleted && this.donorSnapshot) {
+    return {
+      _id: "deleted",
+      name:
+        this.donorSnapshot.fullName ||
+        this.donorSnapshot.name ||
+        "Usuário Excluído",
+      fullName:
+        this.donorSnapshot.fullName ||
+        this.donorSnapshot.name ||
+        "Usuário Excluído",
+      avatar: this.donorSnapshot.avatar || "🔒",
+      username: this.donorSnapshot.username || null,
+      profilePhotoUrl: this.donorSnapshot.profilePhotoUrl || null,
+      deleted: true,
+    };
+  }
+
+  // Fallback
+  return {
+    _id: "deleted",
+    name: "Usuário Excluído",
+    fullName: "Usuário Excluído",
+    avatar: "🔒",
+    username: null,
+    profilePhotoUrl: null,
+    deleted: true,
+  };
+};
+
+donationSchema.methods.getRecipientData = function () {
+  if (this.recipient && !this.recipientDeleted) {
+    return {
+      _id: this.recipient._id || this.recipient,
+      name:
+        this.recipient.fullName ||
+        this.recipient.name ||
+        this.recipientInfo?.name,
+      fullName:
+        this.recipient.fullName ||
+        this.recipient.name ||
+        this.recipientInfo?.name,
+      avatar: this.recipient.avatar || this.recipientInfo?.avatar || "👤",
+      username: this.recipient.username || this.recipientInfo?.username,
+      profilePhotoUrl:
+        this.recipient.profilePhotoUrl || this.recipientInfo?.profilePhotoUrl,
+      deleted: false,
+    };
+  }
+
+  // Usuário excluído - usar snapshot
+  if (this.recipientDeleted && this.recipientSnapshot) {
+    return {
+      _id: "deleted",
+      name:
+        this.recipientSnapshot.fullName ||
+        this.recipientSnapshot.name ||
+        "Usuário Excluído",
+      fullName:
+        this.recipientSnapshot.fullName ||
+        this.recipientSnapshot.name ||
+        "Usuário Excluído",
+      avatar: this.recipientSnapshot.avatar || "🔒",
+      username: this.recipientSnapshot.username || null,
+      profilePhotoUrl: this.recipientSnapshot.profilePhotoUrl || null,
+      deleted: true,
+    };
+  }
+
+  // Fallback
+  return {
+    _id: "deleted",
+    name: "Usuário Excluído",
+    fullName: "Usuário Excluído",
+    avatar: "🔒",
+    username: null,
+    profilePhotoUrl: null,
+    deleted: true,
+  };
 };
 
 module.exports = mongoose.model("Donation", donationSchema);

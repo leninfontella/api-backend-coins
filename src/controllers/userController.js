@@ -506,10 +506,10 @@ exports.getAllDonations = async (req, res, next) => {
 
     const Donation = require("../models/Donation");
 
-    // 🔧 CORREÇÃO: Adicionar profilePhotoUrl aos selects de populate
+    // Buscar doações completas
     const donations = await Donation.find({ status: "completed" })
-      .populate("donor", "name fullName avatar username profilePhoto") // 🔧 NOVO: incluir profilePhoto
-      .populate("recipient", "name fullName avatar username profilePhoto") // 🔧 NOVO
+      .populate("donor", "name fullName avatar username profilePhoto")
+      .populate("recipient", "name fullName avatar username profilePhoto")
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
@@ -518,43 +518,62 @@ exports.getAllDonations = async (req, res, next) => {
       status: "completed",
     });
 
-    // 🔧 CORREÇÃO: Incluir profilePhotoUrl nos objetos retornados
-    const formattedDonations = donations.map((donation) => ({
-      _id: donation._id,
-      amount: donation.amount,
-      message: donation.message || "",
-      status: donation.status,
-      createdAt: donation.createdAt,
-      updatedAt: donation.updatedAt,
-      donor: {
-        _id: donation.donor._id,
-        name: donation.donor.fullName || donation.donor.name,
-        fullName: donation.donor.fullName || donation.donor.name,
-        avatar: donation.donor.avatar || "👤",
-        username: donation.donor.username,
-        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO (virtual do modelo)
-      },
-      recipient: {
-        _id: donation.recipient._id,
-        name: donation.recipient.fullName || donation.recipient.name,
-        fullName: donation.recipient.fullName || donation.recipient.name,
-        avatar: donation.recipient.avatar || "👤",
-        username: donation.recipient.username,
-        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
-      },
-      donorInfo: {
-        name: donation.donor.fullName || donation.donor.name,
-        avatar: donation.donor.avatar || "👤",
-        username: donation.donor.username,
-        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
-      },
-      recipientInfo: {
-        name: donation.recipient.fullName || donation.recipient.name,
-        avatar: donation.recipient.avatar || "👤",
-        username: donation.recipient.username,
-        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
-      },
-    }));
+    // 🔧 CORREÇÃO: Tratar doações com donor/recipient null
+    const formattedDonations = donations.map((donation) => {
+      // Se donor foi excluído (null), usar dados de fallback
+      const donorData = donation.donor
+        ? {
+            _id: donation.donor._id,
+            name: donation.donor.fullName || donation.donor.name,
+            fullName: donation.donor.fullName || donation.donor.name,
+            avatar: donation.donor.avatar || "👤",
+            username: donation.donor.username,
+            profilePhotoUrl: donation.donor.profilePhotoUrl,
+          }
+        : {
+            _id: "deleted",
+            name: "Usuário Excluído",
+            fullName: "Usuário Excluído",
+            avatar: "🔒",
+            username: null,
+            profilePhotoUrl: null,
+          };
+
+      // Se recipient foi excluído (null), usar dados de fallback
+      const recipientData = donation.recipient
+        ? {
+            _id: donation.recipient._id,
+            name: donation.recipient.fullName || donation.recipient.name,
+            fullName: donation.recipient.fullName || donation.recipient.name,
+            avatar: donation.recipient.avatar || "👤",
+            username: donation.recipient.username,
+            profilePhotoUrl: donation.recipient.profilePhotoUrl,
+          }
+        : {
+            _id: "deleted",
+            name: "Usuário Excluído",
+            fullName: "Usuário Excluído",
+            avatar: "🔒",
+            username: null,
+            profilePhotoUrl: null,
+          };
+
+      return {
+        _id: donation._id,
+        amount: donation.amount,
+        message: donation.message || "",
+        status: donation.status,
+        createdAt: donation.createdAt,
+        updatedAt: donation.updatedAt,
+        donorDeleted: donation.donorDeleted || false,
+        recipientDeleted: donation.recipientDeleted || false,
+        isAnonymous: donation.isAnonymous || false,
+        donor: donorData,
+        recipient: recipientData,
+        donorInfo: donorData,
+        recipientInfo: recipientData,
+      };
+    });
 
     res.json({
       success: true,
@@ -571,12 +590,13 @@ exports.getAllDonations = async (req, res, next) => {
       },
     });
   } catch (error) {
-    console.error("Erro ao obter todas as doações:", error);
+    console.error("❌ Erro ao obter todas as doações:", error);
     next(error);
   }
 };
 
 // CORREÇÃO: Obter apenas transações enviadas pelo usuário logado
+
 exports.getSentDonations = async (req, res, next) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -586,12 +606,11 @@ exports.getSentDonations = async (req, res, next) => {
 
     const Donation = require("../models/Donation");
 
-    // 🔧 CORREÇÃO: Incluir profilePhoto no populate
     const donations = await Donation.find({
       donor: req.user.id,
       status: "completed",
     })
-      .populate("recipient", "name fullName avatar username profilePhoto") // 🔧 NOVO
+      .populate("recipient", "name fullName avatar username profilePhoto")
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
@@ -601,43 +620,53 @@ exports.getSentDonations = async (req, res, next) => {
       status: "completed",
     });
 
-    const formattedDonations = donations.map((donation) => ({
-      _id: donation._id,
-      amount: donation.amount,
-      message: donation.message || "",
-      status: donation.status,
-      createdAt: donation.createdAt,
-      updatedAt: donation.updatedAt,
-      type: "sent",
-      donor: {
-        _id: req.user.id,
-        name: req.user.fullName || req.user.name,
-        fullName: req.user.fullName || req.user.name,
-        avatar: req.user.avatar || "👤",
-        username: req.user.username,
-        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
-      },
-      recipient: {
-        _id: donation.recipient._id,
-        name: donation.recipient.fullName || donation.recipient.name,
-        fullName: donation.recipient.fullName || donation.recipient.name,
-        avatar: donation.recipient.avatar || "👤",
-        username: donation.recipient.username,
-        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
-      },
-      donorInfo: {
-        name: req.user.fullName || req.user.name,
-        avatar: req.user.avatar || "👤",
-        username: req.user.username,
-        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
-      },
-      recipientInfo: {
-        name: donation.recipient.fullName || donation.recipient.name,
-        avatar: donation.recipient.avatar || "👤",
-        username: donation.recipient.username,
-        profilePhotoUrl: donation.recipient.profilePhotoUrl, // 🔧 NOVO
-      },
-    }));
+    const formattedDonations = donations.map((donation) => {
+      // 🔧 CORREÇÃO: Verificar se recipient existe
+      const recipientData = donation.recipient
+        ? {
+            _id: donation.recipient._id,
+            name: donation.recipient.fullName || donation.recipient.name,
+            fullName: donation.recipient.fullName || donation.recipient.name,
+            avatar: donation.recipient.avatar || "👤",
+            username: donation.recipient.username,
+            profilePhotoUrl: donation.recipient.profilePhotoUrl,
+          }
+        : {
+            _id: "deleted",
+            name: "Usuário Excluído",
+            fullName: "Usuário Excluído",
+            avatar: "🔒",
+            username: null,
+            profilePhotoUrl: null,
+          };
+
+      return {
+        _id: donation._id,
+        amount: donation.amount,
+        message: donation.message || "",
+        status: donation.status,
+        createdAt: donation.createdAt,
+        updatedAt: donation.updatedAt,
+        type: "sent",
+        recipientDeleted: donation.recipientDeleted || false,
+        donor: {
+          _id: req.user.id,
+          name: req.user.fullName || req.user.name,
+          fullName: req.user.fullName || req.user.name,
+          avatar: req.user.avatar || "👤",
+          username: req.user.username,
+          profilePhotoUrl: req.user.profilePhotoUrl,
+        },
+        recipient: recipientData,
+        donorInfo: {
+          name: req.user.fullName || req.user.name,
+          avatar: req.user.avatar || "👤",
+          username: req.user.username,
+          profilePhotoUrl: req.user.profilePhotoUrl,
+        },
+        recipientInfo: recipientData,
+      };
+    });
 
     res.json({
       success: true,
@@ -654,12 +683,13 @@ exports.getSentDonations = async (req, res, next) => {
       },
     });
   } catch (error) {
-    console.error("Erro ao obter doações enviadas:", error);
+    console.error("❌ Erro ao obter doações enviadas:", error);
     next(error);
   }
 };
 
 // CORREÇÃO: Obter apenas transações recebidas pelo usuário logado
+
 exports.getReceivedDonations = async (req, res, next) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -669,12 +699,11 @@ exports.getReceivedDonations = async (req, res, next) => {
 
     const Donation = require("../models/Donation");
 
-    // 🔧 CORREÇÃO: Incluir profilePhoto no populate
     const donations = await Donation.find({
       recipient: req.user.id,
       status: "completed",
     })
-      .populate("donor", "name fullName avatar username profilePhoto") // 🔧 NOVO
+      .populate("donor", "name fullName avatar username profilePhoto")
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .skip(skip);
@@ -684,43 +713,53 @@ exports.getReceivedDonations = async (req, res, next) => {
       status: "completed",
     });
 
-    const formattedDonations = donations.map((donation) => ({
-      _id: donation._id,
-      amount: donation.amount,
-      message: donation.message || "",
-      status: donation.status,
-      createdAt: donation.createdAt,
-      updatedAt: donation.updatedAt,
-      type: "received",
-      donor: {
-        _id: donation.donor._id,
-        name: donation.donor.fullName || donation.donor.name,
-        fullName: donation.donor.fullName || donation.donor.name,
-        avatar: donation.donor.avatar || "👤",
-        username: donation.donor.username,
-        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
-      },
-      recipient: {
-        _id: req.user.id,
-        name: req.user.fullName || req.user.name,
-        fullName: req.user.fullName || req.user.name,
-        avatar: req.user.avatar || "👤",
-        username: req.user.username,
-        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
-      },
-      donorInfo: {
-        name: donation.donor.fullName || donation.donor.name,
-        avatar: donation.donor.avatar || "👤",
-        username: donation.donor.username,
-        profilePhotoUrl: donation.donor.profilePhotoUrl, // 🔧 NOVO
-      },
-      recipientInfo: {
-        name: req.user.fullName || req.user.name,
-        avatar: req.user.avatar || "👤",
-        username: req.user.username,
-        profilePhotoUrl: req.user.profilePhotoUrl, // 🔧 NOVO
-      },
-    }));
+    const formattedDonations = donations.map((donation) => {
+      // 🔧 CORREÇÃO: Verificar se donor existe
+      const donorData = donation.donor
+        ? {
+            _id: donation.donor._id,
+            name: donation.donor.fullName || donation.donor.name,
+            fullName: donation.donor.fullName || donation.donor.name,
+            avatar: donation.donor.avatar || "👤",
+            username: donation.donor.username,
+            profilePhotoUrl: donation.donor.profilePhotoUrl,
+          }
+        : {
+            _id: "deleted",
+            name: "Usuário Excluído",
+            fullName: "Usuário Excluído",
+            avatar: "🔒",
+            username: null,
+            profilePhotoUrl: null,
+          };
+
+      return {
+        _id: donation._id,
+        amount: donation.amount,
+        message: donation.message || "",
+        status: donation.status,
+        createdAt: donation.createdAt,
+        updatedAt: donation.updatedAt,
+        type: "received",
+        donorDeleted: donation.donorDeleted || false,
+        donor: donorData,
+        recipient: {
+          _id: req.user.id,
+          name: req.user.fullName || req.user.name,
+          fullName: req.user.fullName || req.user.name,
+          avatar: req.user.avatar || "👤",
+          username: req.user.username,
+          profilePhotoUrl: req.user.profilePhotoUrl,
+        },
+        donorInfo: donorData,
+        recipientInfo: {
+          name: req.user.fullName || req.user.name,
+          avatar: req.user.avatar || "👤",
+          username: req.user.username,
+          profilePhotoUrl: req.user.profilePhotoUrl,
+        },
+      };
+    });
 
     res.json({
       success: true,
@@ -737,7 +776,7 @@ exports.getReceivedDonations = async (req, res, next) => {
       },
     });
   } catch (error) {
-    console.error("Erro ao obter doações recebidas:", error);
+    console.error("❌ Erro ao obter doações recebidas:", error);
     next(error);
   }
 };
@@ -818,10 +857,9 @@ exports.getStats = async (req, res, next) => {
   }
 };
 
-// userController.js - Adicionar esta função
-
 /**
  * Excluir conta do usuário permanentemente
+ * Mantém integridade referencial das doações
  * DELETE /api/users/account
  */
 exports.deleteAccount = async (req, res, next) => {
@@ -855,7 +893,6 @@ exports.deleteAccount = async (req, res, next) => {
       });
     }
 
-    // Validar senha
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       await session.abortTransaction();
@@ -867,7 +904,7 @@ exports.deleteAccount = async (req, res, next) => {
 
     console.log(`🗑️ Iniciando exclusão da conta: ${user.email}`);
 
-    // 3️⃣ BUSCAR ESTATÍSTICAS ANTES DE EXCLUIR
+    // 3️⃣ BUSCAR ESTATÍSTICAS
     const Donation = require("../models/Donation");
     const Notification = require("../models/Notification");
 
@@ -879,38 +916,45 @@ exports.deleteAccount = async (req, res, next) => {
       ]
     );
 
-    // 4️⃣ EXCLUIR DADOS RELACIONADOS
+    // 4️⃣ SALVAR SNAPSHOT DO USUÁRIO ANTES DE EXCLUIR
+    const userSnapshot = {
+      name: user.fullName || user.name,
+      avatar: user.avatar,
+      username: user.username,
+    };
 
-    // Excluir notificações do usuário
-    await Notification.deleteMany({ userId: userId }).session(session);
-    console.log(`   ✅ ${notifications} notificações excluídas`);
+    // 5️⃣ ATUALIZAR DOAÇÕES COM SNAPSHOT
 
-    // Atualizar doações onde o usuário é doador (tornar anônimas)
+    // Doações enviadas - salvar snapshot do donor
     await Donation.updateMany(
       { donor: userId },
       {
         $set: {
-          donor: null,
           donorDeleted: true,
           isAnonymous: true,
+          donorSnapshot: userSnapshot,
         },
       }
     ).session(session);
     console.log(`   ✅ ${sentDonations} doações enviadas anonimizadas`);
 
-    // Atualizar doações onde o usuário é destinatário (tornar anônimas)
+    // Doações recebidas - salvar snapshot do recipient
     await Donation.updateMany(
       { recipient: userId },
       {
         $set: {
-          recipient: null,
           recipientDeleted: true,
+          recipientSnapshot: userSnapshot,
         },
       }
     ).session(session);
     console.log(`   ✅ ${receivedDonations} doações recebidas anonimizadas`);
 
-    // 5️⃣ EXCLUIR FOTO DE PERFIL (SE EXISTIR)
+    // 6️⃣ EXCLUIR NOTIFICAÇÕES
+    await Notification.deleteMany({ userId: userId }).session(session);
+    console.log(`   ✅ ${notifications} notificações excluídas`);
+
+    // 7️⃣ EXCLUIR FOTO DE PERFIL
     if (user.profilePhoto && user.profilePhoto.path) {
       try {
         const fs = require("fs").promises;
@@ -923,11 +967,8 @@ exports.deleteAccount = async (req, res, next) => {
             `   ✅ Foto de perfil excluída: ${user.profilePhoto.filename}`
           );
         } else if (user.profilePhoto.storage === "gcs") {
-          // Se usar Google Cloud Storage
-          const { Storage } = require("@google-cloud/storage");
-          const storage = new Storage();
-          const bucket = storage.bucket(process.env.GCS_BUCKET_NAME);
-          await bucket.file(user.profilePhoto.path).delete();
+          const gcsService = require("../services/gcsService");
+          await gcsService.deleteImage(user.profilePhoto.filename);
           console.log(`   ✅ Foto de perfil excluída do GCS`);
         }
       } catch (fileError) {
@@ -935,11 +976,10 @@ exports.deleteAccount = async (req, res, next) => {
           `   ⚠️ Erro ao excluir foto de perfil:`,
           fileError.message
         );
-        // Não abortar transação por erro na exclusão de arquivo
       }
     }
 
-    // 6️⃣ LIMPAR CACHE DO SERVIDOR (SE IMPLEMENTADO)
+    // 8️⃣ LIMPAR CACHE
     try {
       const serverCache = require("../utils/serverCache");
       if (user.profilePhoto && user.profilePhoto.path) {
@@ -950,14 +990,14 @@ exports.deleteAccount = async (req, res, next) => {
       console.warn(`   ⚠️ Erro ao limpar cache:`, cacheError.message);
     }
 
-    // 7️⃣ EXCLUIR USUÁRIO DO BANCO
+    // 9️⃣ EXCLUIR USUÁRIO
     await User.findByIdAndDelete(userId).session(session);
     console.log(`   ✅ Conta excluída do banco de dados`);
 
-    // 8️⃣ COMMIT DA TRANSAÇÃO
+    // 🔟 COMMIT DA TRANSAÇÃO
     await session.commitTransaction();
 
-    // 9️⃣ LOG DE AUDITORIA
+    // 1️⃣1️⃣ LOG DE AUDITORIA
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║  🗑️  CONTA EXCLUÍDA PERMANENTEMENTE                        ║
@@ -967,16 +1007,19 @@ exports.deleteAccount = async (req, res, next) => {
 ║  🆔 ID: ${userId}
 ║  📅 Data: ${new Date().toISOString()}
 ║  
-║  📊 Dados Removidos:
-║     • ${notifications} notificações
-║     • ${sentDonations} doações enviadas (anonimizadas)
-║     • ${receivedDonations} doações recebidas (anonimizadas)
-║     • 1 foto de perfil
-║     • 1 conta de usuário
+║  📊 Dados Processados:
+║     • ${notifications} notificações excluídas
+║     • ${sentDonations} doações enviadas (preservadas com snapshot)
+║     • ${receivedDonations} doações recebidas (preservadas com snapshot)
+║     • 1 foto de perfil removida
+║     • 1 conta de usuário excluída
+║  
+║  ℹ️  As doações foram mantidas no histórico como "Usuário Excluído"
+║     para preservar a integridade dos dados e relatórios.
 ╚════════════════════════════════════════════════════════════╝
     `);
 
-    // 🔟 RESPOSTA FINAL
+    // 1️⃣2️⃣ RESPOSTA FINAL
     res.json({
       success: true,
       message: "Conta excluída permanentemente",
@@ -987,13 +1030,18 @@ exports.deleteAccount = async (req, res, next) => {
           donationsSentAnonymized: sentDonations,
           donationsReceivedAnonymized: receivedDonations,
         },
+        note: "Suas doações foram preservadas no histórico como 'Usuário Excluído' para manter a integridade dos registros.",
       },
     });
   } catch (error) {
     await session.abortTransaction();
     console.error("❌ Erro ao excluir conta:", error);
 
-    next(error);
+    res.status(500).json({
+      success: false,
+      message: "Erro ao excluir conta. Tente novamente.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
   } finally {
     session.endSession();
   }
