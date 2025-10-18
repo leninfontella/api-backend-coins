@@ -118,39 +118,6 @@ class WebSocketServer {
     return false;
   }
 
-  /**
-   * Notificar usuário sobre subida de nível
-   * @param {String} userId - ID do usuário
-   * @param {Object} levelData - Dados do novo nível
-   */
-  notifyLevelUp(userId, levelData) {
-    const client = this.clients.get(userId.toString());
-
-    if (client && client.readyState === WebSocket.OPEN) {
-      try {
-        client.send(
-          JSON.stringify({
-            type: "level_up",
-            data: levelData,
-          })
-        );
-
-        console.log(
-          `🎖️ Notificação de Level Up enviada para usuário ${userId}`
-        );
-        return true;
-      } catch (error) {
-        console.error("❌ Erro ao enviar notificação de level up:", error);
-        return false;
-      }
-    }
-
-    console.log(
-      `⚠️ Usuário ${userId} não está conectado - Level Up não notificado em tempo real`
-    );
-    return false;
-  }
-
   // Broadcast para múltiplos usuários
   broadcast(userIds, data) {
     let sent = 0;

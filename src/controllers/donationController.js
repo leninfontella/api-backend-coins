@@ -4,97 +4,9 @@ const User = require("../models/User");
 const Donation = require("../models/Donation");
 const Notification = require("../models/Notification");
 
-// 🎖️ SISTEMA DE NÍVEIS - Definição dos badges
-const BADGE_LEVELS = {
-  1: { min: 0, max: 199 },
-  2: { min: 200, max: 499 },
-  3: { min: 500, max: 999 },
-  4: { min: 1000, max: 4999 },
-  5: { min: 5000, max: 9999 },
-  6: { min: 10000, max: 49999 },
-  7: { min: 50000, max: 99999 },
-  8: { min: 100000, max: 499999 },
-  9: { min: 500000, max: 999999 },
-  10: { min: 1000000, max: Infinity },
-};
-
-/**
- * Determinar nível baseado em pontos
- */
-function getCurrentLevel(points) {
-  for (let level in BADGE_LEVELS) {
-    const levelData = BADGE_LEVELS[level];
-    if (points >= levelData.min && points <= levelData.max) {
-      return parseInt(level);
-    }
-  }
-  return 1;
-}
-
-/**
- * Verificar se houve mudança de nível após doação
- */
-async function checkAndNotifyLevelUp(
-  recipientId,
-  oldPoints,
-  newPoints,
-  wsServer
-) {
-  try {
-    const oldLevel = getCurrentLevel(oldPoints);
-    const newLevel = getCurrentLevel(newPoints);
-
-    // Verificar se subiu de nível
-    if (newLevel > oldLevel) {
-      console.log(
-        `🎖️ Usuário ${recipientId} subiu de nível: ${oldLevel} → ${newLevel}`
-      );
-
-      // Dados do level up
-      const levelUpData = {
-        oldLevel: oldLevel,
-        newLevel: newLevel,
-        level: newLevel,
-        totalPoints: newPoints,
-        points: newPoints,
-        timestamp: new Date().toISOString(),
-      };
-
-      // Notificar via WebSocket
-      if (wsServer) {
-        wsServer.notifyLevelUp(recipientId, levelUpData);
-      }
-
-      // Criar notificação de level up
-      try {
-        const Notification = require("../models/Notification");
-        await Notification.create({
-          user: recipientId,
-          title: "🎖️ Novo Nível Alcançado!",
-          message: `Parabéns! Você alcançou o nível ${newLevel}!`,
-          type: "level_up",
-          data: levelUpData,
-        });
-      } catch (notificationError) {
-        console.error(
-          "Erro ao criar notificação de level up:",
-          notificationError
-        );
-      }
-
-      return { leveledUp: true, levelUpData };
-    }
-
-    return { leveledUp: false };
-  } catch (error) {
-    console.error("❌ Erro ao verificar level up:", error);
-    return { leveledUp: false };
-  }
-}
-
 class DonationController {
   /**
-   * Criar nova doação com sistema completo de notificações e level-up
+   * Criar nova doação com sistema completo de notificações
    */
   async createDonation(req, res) {
     try {
@@ -129,9 +41,6 @@ class DonationController {
         });
       }
 
-      // 🎖️ CAPTURAR PONTOS ANTES DA DOAÇÃO (para verificar level-up)
-      const oldRecipientPoints = recipientUser.totalReceived || 0;
-
       // 🔧 CORREÇÃO: Incluir profilePhotoUrl em donorInfo e recipientInfo
       const newDonation = new Donation({
         donor: donorUser._id,
@@ -143,13 +52,13 @@ class DonationController {
           name: donorUser.fullName || donorUser.name,
           username: donorUser.username,
           avatar: donorUser.avatar,
-          profilePhotoUrl: donorUser.profilePhotoUrl,
+          profilePhotoUrl: donorUser.profilePhotoUrl, // 🔧 NOVO
         },
         recipientInfo: {
           name: recipientUser.fullName || recipientUser.name,
           username: recipientUser.username,
           avatar: recipientUser.avatar,
-          profilePhotoUrl: recipientUser.profilePhotoUrl,
+          profilePhotoUrl: recipientUser.profilePhotoUrl, // 🔧 NOVO
         },
       });
       await newDonation.save();
@@ -158,19 +67,6 @@ class DonationController {
         donorUser.updateCoins(-parsedAmount, "donation"),
         recipientUser.updateCoins(parsedAmount, "received"),
       ]);
-
-      // 🎖️ BUSCAR DADOS ATUALIZADOS DO DESTINATÁRIO (após updateCoins)
-      await recipientUser.reload();
-      const newRecipientPoints = recipientUser.totalReceived || 0;
-
-      // 🎖️ VERIFICAR LEVEL-UP
-      const wsServer = req.app.get("wsServer");
-      const levelUpResult = await checkAndNotifyLevelUp(
-        recipientUser._id.toString(),
-        oldRecipientPoints,
-        newRecipientPoints,
-        wsServer
-      );
 
       // 🔧 CORREÇÃO: Incluir profilePhotoUrl nos dados de notificação
       const donationData = {
@@ -182,12 +78,10 @@ class DonationController {
           name: donorUser.fullName || donorUser.name,
           username: donorUser.username,
           avatar: donorUser.avatar,
-          profilePhotoUrl: donorUser.profilePhotoUrl,
+          profilePhotoUrl: donorUser.profilePhotoUrl, // 🔧 NOVO
         },
         newBalance: recipientUser.coins,
         timestamp: new Date().toISOString(),
-        // 🎖️ ADICIONAR INFORMAÇÃO DE LEVEL-UP SE HOUVER
-        ...(levelUpResult.leveledUp && { levelUp: levelUpResult.levelUpData }),
       };
 
       const recipientNotification =
@@ -203,6 +97,7 @@ class DonationController {
         newBalance: donorUser.coins,
       });
 
+      const wsServer = req.app.get("wsServer");
       if (wsServer && recipientNotification) {
         const wasSent = wsServer.notifyDonationReceived(
           recipientUser._id.toString(),
@@ -221,10 +116,6 @@ class DonationController {
           donationId: newDonation._id,
           donorCoins: donorUser.coins,
           recipientCoins: recipientUser.coins,
-          // 🎖️ INCLUIR INFORMAÇÃO DE LEVEL-UP NA RESPOSTA
-          ...(levelUpResult.leveledUp && {
-            levelUp: levelUpResult.levelUpData,
-          }),
         },
       });
     } catch (error) {
