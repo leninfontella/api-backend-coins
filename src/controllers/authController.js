@@ -438,7 +438,7 @@ exports.changePassword = async (req, res, next) => {
     }
 
     // Verificar senha atual
-    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       return res.status(400).json({
         success: false,
@@ -447,7 +447,7 @@ exports.changePassword = async (req, res, next) => {
     }
 
     // Evitar reutilização da senha atual
-    const samePassword = await bcrypt.compare(newPassword, user.password);
+    const samePassword = await user.comparePassword(newPassword);
     if (samePassword) {
       return res.status(400).json({
         success: false,
@@ -455,12 +455,17 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // Criptografar nova senha
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(newPassword, salt);
+    // ✅ APENAS DEFINIR A SENHA - O MIDDLEWARE FAZ O HASH
+    user.password = newPassword;
     user.lastPasswordChange = new Date();
 
     await user.save();
+
+    console.log("✅ Senha alterada com sucesso:", {
+      userId: user._id,
+      email: user.email,
+      timestamp: user.lastPasswordChange,
+    });
 
     return res.status(200).json({
       success: true,
