@@ -5,10 +5,15 @@ const authController = require("../controllers/authController");
 const protect = require("../middleware/authMiddleware");
 const multer = require("multer");
 const upload = multer();
+const {
+  authRateLimit,
+  changePasswordRateLimit,
+} = require("../middleware/rateLimiting");
 
 router.post(
   "/register",
   upload.none(),
+  authRateLimit,
   [
     check("name", "Nome é obrigatório").trim().notEmpty(),
     check("email", "Email inválido").isEmail().normalizeEmail(),
@@ -34,6 +39,7 @@ router.post(
 
 router.post(
   "/login",
+  authRateLimit,
   [
     check("email", "Email inválido").isEmail().normalizeEmail(),
     check("password", "Senha é obrigatória").notEmpty(),
@@ -46,6 +52,23 @@ router.get("/check", protect, (req, res) => {
   // Se o middleware `protect` passar, o token é válido
   res.status(200).json({ success: true, message: "Usuário autenticado" });
 });
+
+router.post(
+  "/change-password",
+  protect,
+  changePasswordRateLimit, //
+  [
+    // 🔧 ADICIONAR VALIDAÇÕES
+    check("currentPassword", "Senha atual é obrigatória").notEmpty(),
+    check("newPassword", "Nova senha deve ter no mínimo 8 caracteres")
+      .isLength({ min: 8 })
+      .withMessage("Senha deve ter pelo menos 8 caracteres"),
+    check("newPassword")
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+      .withMessage("Senha deve conter letras maiúsculas, minúsculas e números"),
+  ],
+  authController.changePassword
+);
 
 router.post("/refresh", authController.refreshToken);
 router.post("/logout", authController.logout);

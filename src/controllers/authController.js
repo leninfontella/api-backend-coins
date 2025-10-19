@@ -1,5 +1,7 @@
 const User = require("../models/User");
 const Token = require("../models/Token");
+const AuditLog = require("../models/AuditLog");
+
 const Notification = require("../models/Notification");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
@@ -419,15 +421,18 @@ exports.me = async (req, res, next) => {
 
 exports.changePassword = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
+    // 🔧 VALIDAR ERROS DO EXPRESS-VALIDATOR
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        message: "Senha atual e nova senha são obrigatórias",
+        message: errors.array()[0].msg,
+        errors: errors.array(),
       });
     }
+
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
 
     const user = await User.findById(userId).select("+password");
     if (!user) {
@@ -437,16 +442,24 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // Verificar senha atual
+    // 🔧 VERIFICAR SENHA ATUAL
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
+      // 🔧 LOG DE TENTATIVA FALHA
+      console.warn("⚠️ Tentativa de alteração de senha com senha incorreta:", {
+        userId: user._id,
+        email: user.email,
+        ip: req.ip,
+        timestamp: new Date(),
+      });
+
       return res.status(400).json({
         success: false,
         message: "Senha atual incorreta",
       });
     }
 
-    // Evitar reutilização da senha atual
+    // 🔧 EVITAR REUTILIZAÇÃO DA SENHA ATUAL
     const samePassword = await user.comparePassword(newPassword);
     if (samePassword) {
       return res.status(400).json({
@@ -455,22 +468,74 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // ✅ APENAS DEFINIR A SENHA - O MIDDLEWARE FAZ O HASH
+    // 🔧 VALIDAÇÃO ADICIONAL DE COMPLEXIDADE (backend)
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "A senha deve ter pelo menos 8 caracteres",
+      });
+    }
+
+    const hasUpperCase = /[A-Z]/.test(newPassword);
+    const hasLowerCase = /[a-z]/.test(newPassword);
+    const hasNumber = /[0-9]/.test(newPassword);
+    const hasSpecialChar = /[^a-zA-Z0-9]/.test(newPassword);
+
+    const complexityScore = [
+      hasUpperCase,
+      hasLowerCase,
+      hasNumber,
+      hasSpecialChar,
+    ].filter(Boolean).length;
+
+    if (complexityScore < 3) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Senha muito fraca. Use combinação de maiúsculas, minúsculas, números e símbolos",
+      });
+    }
+
+    // 🔧 ATUALIZAR SENHA (middleware do Mongoose faz o hash)
     user.password = newPassword;
     user.lastPasswordChange = new Date();
 
+    // 🔧 INVALIDAR TODOS OS REFRESH TOKENS
+    const tokensDeleted = await Token.deleteMany({ user: user._id });
+
     await user.save();
+
+    // 🔧 LOG DE AUDITORIA (criar modelo se não existir)
+    try {
+      await AuditLog.create({
+        userId: user._id,
+        action: "PASSWORD_CHANGE",
+        ip: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers["user-agent"],
+        metadata: {
+          email: user.email,
+          tokensInvalidated: tokensDeleted.deletedCount,
+          timestamp: new Date(),
+        },
+      });
+    } catch (auditError) {
+      console.error("⚠️ Erro ao criar log de auditoria:", auditError);
+      // Não falhar a operação se o log falhar
+    }
 
     console.log("✅ Senha alterada com sucesso:", {
       userId: user._id,
       email: user.email,
       timestamp: user.lastPasswordChange,
+      tokensInvalidated: tokensDeleted.deletedCount,
     });
 
     return res.status(200).json({
       success: true,
-      message: "Senha alterada com sucesso!",
+      message:
+        "Senha alterada com sucesso! Por segurança, faça login novamente.",
       timestamp: user.lastPasswordChange,
+      requiresLogin: true, // 🔧 Flag para frontend forçar re-login
     });
   } catch (error) {
     console.error("❌ Erro ao alterar senha:", error);

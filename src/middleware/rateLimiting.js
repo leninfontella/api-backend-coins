@@ -194,6 +194,38 @@ const profileUpdateRateLimit = rateLimit({
   },
 });
 
+const changePasswordRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 3, // máximo 3 tentativas de alterar senha por 15 minutos
+  message: {
+    success: false,
+    message:
+      "Muitas tentativas de alteração de senha. Tente novamente em 15 minutos.",
+    code: "CHANGE_PASSWORD_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // 🔧 IMPORTANTE: Usar IP + userId para evitar bloqueio global
+  keyGenerator: (req) => {
+    return `change-pwd-${req.ip}-${req.user?.id || "anonymous"}`;
+  },
+  handler: (req, res) => {
+    console.warn("⚠️ Rate limit atingido para alteração de senha:", {
+      ip: req.ip,
+      userId: req.user?.id,
+      timestamp: new Date(),
+    });
+
+    res.status(429).json({
+      success: false,
+      message:
+        "Muitas tentativas de alteração de senha. Por segurança, aguarde 15 minutos.",
+      code: "CHANGE_PASSWORD_RATE_LIMIT",
+      retryAfter: Math.round(req.rateLimit.resetTime / 1000),
+    });
+  },
+});
+
 module.exports = {
   dashboardRateLimit,
   goalUpdateRateLimit,
@@ -204,4 +236,5 @@ module.exports = {
   authRateLimit,
   uploadRateLimit,
   profileUpdateRateLimit,
+  changePasswordRateLimit,
 };
