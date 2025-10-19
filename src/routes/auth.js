@@ -50,5 +50,6 @@ router.get("/check", protect, (req, res) => {
 router.post("/refresh", authController.refreshToken);
 router.post("/logout", authController.logout);
 router.get("/me", protect, authController.me);
+router.post("/change-password", protect, authController.changePassword);
 
 module.exports = router;

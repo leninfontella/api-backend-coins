@@ -4,6 +4,8 @@ const Notification = require("../models/Notification");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
 
+const bcrypt = require("bcryptjs");
+
 const createAccessToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "15m",
@@ -412,6 +414,65 @@ exports.me = async (req, res, next) => {
   } catch (err) {
     console.error("❌ Erro no /me:", err);
     next(err);
+  }
+};
+
+exports.changePassword = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Senha atual e nova senha são obrigatórias",
+      });
+    }
+
+    const user = await User.findById(userId).select("+password");
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuário não encontrado",
+      });
+    }
+
+    // Verificar senha atual
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: "Senha atual incorreta",
+      });
+    }
+
+    // Evitar reutilização da senha atual
+    const samePassword = await bcrypt.compare(newPassword, user.password);
+    if (samePassword) {
+      return res.status(400).json({
+        success: false,
+        message: "A nova senha deve ser diferente da atual",
+      });
+    }
+
+    // Criptografar nova senha
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.lastPasswordChange = new Date();
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Senha alterada com sucesso!",
+      timestamp: user.lastPasswordChange,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao alterar senha:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro interno ao alterar senha",
+    });
   }
 };
 

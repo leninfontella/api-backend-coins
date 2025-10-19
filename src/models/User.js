@@ -208,6 +208,10 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    lastPasswordChange: {
+      type: Date,
+      default: null,
+    },
     refreshTokens: [
       {
         token: String,
