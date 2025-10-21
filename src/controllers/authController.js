@@ -1,12 +1,23 @@
 const User = require("../models/User");
 const Token = require("../models/Token");
 const AuditLog = require("../models/AuditLog");
-
 const Notification = require("../models/Notification");
 const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
-
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
+const nodemailer = require("nodemailer");
+
+// ========== CONFIGURAÇÃO DE EMAIL ==========
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// ========== HELPERS ==========
 
 const createAccessToken = (userId) => {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
@@ -20,10 +31,45 @@ const createRefreshToken = (userId) => {
   });
 };
 
+function generateVerificationCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function cookieOptions(req) {
+  const secure = cookieSecure();
+  return {
+    httpOnly: true,
+    secure,
+    sameSite: "strict",
+    maxAge: msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d"),
+  };
+}
+
+function cookieSecure() {
+  return (
+    process.env.COOKIE_SECURE === "true" ||
+    process.env.NODE_ENV === "production"
+  );
+}
+
+function msToMillis(str) {
+  try {
+    const num = parseInt(str.slice(0, -1), 10);
+    const unit = str.slice(-1);
+    if (unit === "d") return num * 24 * 60 * 60 * 1000;
+    if (unit === "h") return num * 60 * 60 * 1000;
+    if (unit === "m") return num * 60 * 1000;
+    return parseInt(str, 10);
+  } catch (e) {
+    return 7 * 24 * 60 * 60 * 1000;
+  }
+}
+
+// ========== AUTENTICAÇÃO BÁSICA ==========
+
 exports.register = async (req, res, next) => {
   const errors = validationResult(req);
 
-  //diagnóstico
   console.log("📝 Dados recebidos no registro:", req.body);
   console.log("⚠️ Erros de validação:", errors.array());
 
@@ -52,16 +98,13 @@ exports.register = async (req, res, next) => {
     const accessToken = createAccessToken(user._id);
     const refreshToken = createRefreshToken(user._id);
 
-    // Salvar refresh token no DB
     const expiresAt = new Date(
       Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
     );
     await Token.create({ user: user._id, token: refreshToken, expiresAt });
 
-    // Enviar cookie httpOnly com refresh token
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
-    // 🔧 CORREÇÃO: Preparar dados do usuário com foto SEMPRE (mesmo null para novos)
     const userData = {
       id: user._id,
       name: user.name,
@@ -85,9 +128,8 @@ exports.register = async (req, res, next) => {
       settings: user.settings,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      // 🔧 CRÍTICO: Sempre incluir foto (null para novos usuários)
-      profilePhotoUrl: user.profilePhotoUrl, // Virtual que retorna URL do GCS ou null
-      profilePhoto: user.profilePhoto, // Objeto completo para debug
+      profilePhotoUrl: user.profilePhotoUrl,
+      profilePhoto: user.profilePhoto,
     };
 
     console.log("✅ Registro bem-sucedido:", {
@@ -104,7 +146,6 @@ exports.register = async (req, res, next) => {
       data: {
         user: userData,
         accessToken,
-        // Novo usuário não tem notificações pendentes
         hasPendingNotifications: false,
         pendingNotificationsCount: 0,
       },
@@ -112,21 +153,17 @@ exports.register = async (req, res, next) => {
   } catch (err) {
     console.error("❌ Erro no registro:", err);
     if (err.code === 11000) {
-      // Verifica qual campo causou a violação de unicidade
       if (err.keyValue.email) {
         return res.status(409).json({ message: "Email já cadastrado" });
       }
       if (err.keyValue.cpf) {
-        // ✅ TRATAMENTO CPF
         return res.status(409).json({ message: "CPF já cadastrado!" });
       }
       if (err.keyValue.phone) {
-        // ✅ TRATAMENTO PHONE
         return res.status(409).json({ message: "Telefone já cadastrado!" });
       }
     }
 
-    // Trata outros erros de validação do Mongoose (ex: required)
     if (err.name === "ValidationError") {
       return res
         .status(400)
@@ -155,7 +192,6 @@ exports.login = async (req, res, next) => {
     const accessToken = createAccessToken(user._id);
     const refreshToken = createRefreshToken(user._id);
 
-    // Salvar refresh token
     const expiresAt = new Date(
       Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
     );
@@ -163,7 +199,6 @@ exports.login = async (req, res, next) => {
 
     res.cookie("refreshToken", refreshToken, cookieOptions(req));
 
-    // 🔔 BUSCAR NOTIFICAÇÕES PENDENTES (não exibidas)
     const pendingNotifications = await Notification.find({
       user: user._id,
       displayed: false,
@@ -173,11 +208,8 @@ exports.login = async (req, res, next) => {
       .limit(10);
 
     const hasPendingNotifications = pendingNotifications.length > 0;
-
-    // Opcional: Obter contagem total de não lidas
     const unreadCount = await Notification.getUnreadCount(user._id);
 
-    // 🔧 CRÍTICO: Preparar dados do usuário com foto SEMPRE
     const userData = {
       id: user._id,
       name: user.name,
@@ -188,7 +220,7 @@ exports.login = async (req, res, next) => {
       avatar: user.avatar,
       institution: user.institution,
       coins: user.coins,
-      balance: user.coins, // Alias
+      balance: user.coins,
       level: user.level,
       xp: user.xp,
       maxXp: user.maxXp,
@@ -201,9 +233,8 @@ exports.login = async (req, res, next) => {
       settings: user.settings,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      // 🔧 CRÍTICO: Sempre incluir foto do banco
-      profilePhotoUrl: user.profilePhotoUrl, // Virtual que retorna URL do GCS ou null
-      profilePhoto: user.profilePhoto, // Objeto completo para debug
+      profilePhotoUrl: user.profilePhotoUrl,
+      profilePhoto: user.profilePhoto,
     };
 
     console.log("✅ Login bem-sucedido:", {
@@ -221,11 +252,9 @@ exports.login = async (req, res, next) => {
       data: {
         user: userData,
         accessToken,
-        // 📬 Informações de notificações pendentes
         hasPendingNotifications,
         pendingNotificationsCount: pendingNotifications.length,
         unreadNotificationsCount: unreadCount,
-        // Opcionalmente, enviar as notificações mais recentes
         recentNotifications: pendingNotifications.slice(0, 5).map((n) => ({
           id: n._id,
           type: n.type,
@@ -248,7 +277,6 @@ exports.refreshToken = async (req, res, next) => {
     const token = req.cookies.refreshToken;
     if (!token) return res.status(401).json({ message: "Sem refresh token" });
 
-    // Verificar token assinado
     let payload;
     try {
       payload = jwt.verify(token, process.env.JWT_SECRET);
@@ -256,22 +284,18 @@ exports.refreshToken = async (req, res, next) => {
       return res.status(401).json({ message: "Refresh token inválido" });
     }
 
-    // Checar se token existe no DB
     const stored = await Token.findOne({ user: payload.id, token });
     if (!stored)
       return res.status(401).json({ message: "Refresh token não reconhecido" });
 
-    // 🔧 NOVO: Buscar usuário para incluir foto na resposta
     const user = await User.findById(payload.id);
     if (!user) {
       return res.status(401).json({ message: "Usuário não encontrado" });
     }
 
-    // Gerar novos tokens
     const accessToken = createAccessToken(payload.id);
     const newRefreshToken = createRefreshToken(payload.id);
 
-    // Substituir token no DB (rotacionar)
     stored.token = newRefreshToken;
     stored.expiresAt = new Date(
       Date.now() + msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d")
@@ -280,16 +304,14 @@ exports.refreshToken = async (req, res, next) => {
 
     res.cookie("refreshToken", newRefreshToken, cookieOptions(req));
 
-    // 🔔 Incluir informações de notificações no refresh
     const unreadCount = await Notification.getUnreadCount(payload.id);
     const hasPending = unreadCount > 0;
 
-    // 🔧 NOVO: Incluir dados do usuário com foto
     const userData = {
       id: user._id,
       name: user.name,
       email: user.email,
-      profilePhotoUrl: user.profilePhotoUrl, // 🔧 CRÍTICO: Incluir foto
+      profilePhotoUrl: user.profilePhotoUrl,
       coins: user.coins,
       level: user.level,
     };
@@ -304,7 +326,7 @@ exports.refreshToken = async (req, res, next) => {
       success: true,
       data: {
         accessToken,
-        user: userData, // 🔧 NOVO: Incluir dados do usuário
+        user: userData,
         hasPendingNotifications: hasPending,
         unreadNotificationsCount: unreadCount,
       },
@@ -347,7 +369,6 @@ exports.me = async (req, res, next) => {
         .json({ success: false, message: "Usuário não encontrado" });
     }
 
-    // 🔔 Incluir informações de notificações no endpoint /me
     const unreadCount = await Notification.getUnreadCount(user._id);
     const pendingNotifications = await Notification.find({
       user: user._id,
@@ -357,7 +378,6 @@ exports.me = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .limit(5);
 
-    // 🔧 CORREÇÃO: Preparar dados do usuário com foto SEMPRE
     const userData = {
       id: user._id,
       name: user.name,
@@ -381,7 +401,6 @@ exports.me = async (req, res, next) => {
       settings: user.settings,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      // 🔧 CRÍTICO: Sempre incluir foto
       profilePhotoUrl: user.profilePhotoUrl,
       profilePhoto: user.profilePhoto,
     };
@@ -397,7 +416,6 @@ exports.me = async (req, res, next) => {
       success: true,
       data: {
         user: userData,
-        // 📬 Informações de notificações
         notifications: {
           unreadCount,
           hasPending: pendingNotifications.length > 0,
@@ -419,9 +437,10 @@ exports.me = async (req, res, next) => {
   }
 };
 
+// ========== ALTERAÇÃO DE SENHA (AUTENTICADO) ==========
+
 exports.changePassword = async (req, res, next) => {
   try {
-    // 🔧 VALIDAR ERROS DO EXPRESS-VALIDATOR
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -442,10 +461,8 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // 🔧 VERIFICAR SENHA ATUAL
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
-      // 🔧 LOG DE TENTATIVA FALHA
       console.warn("⚠️ Tentativa de alteração de senha com senha incorreta:", {
         userId: user._id,
         email: user.email,
@@ -459,7 +476,6 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // 🔧 EVITAR REUTILIZAÇÃO DA SENHA ATUAL
     const samePassword = await user.comparePassword(newPassword);
     if (samePassword) {
       return res.status(400).json({
@@ -468,7 +484,6 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // 🔧 VALIDAÇÃO ADICIONAL DE COMPLEXIDADE (backend)
     if (newPassword.length < 8) {
       return res.status(400).json({
         success: false,
@@ -496,16 +511,13 @@ exports.changePassword = async (req, res, next) => {
       });
     }
 
-    // 🔧 ATUALIZAR SENHA (middleware do Mongoose faz o hash)
     user.password = newPassword;
     user.lastPasswordChange = new Date();
 
-    // 🔧 INVALIDAR TODOS OS REFRESH TOKENS
     const tokensDeleted = await Token.deleteMany({ user: user._id });
 
     await user.save();
 
-    // 🔧 LOG DE AUDITORIA (criar modelo se não existir)
     try {
       await AuditLog.create({
         userId: user._id,
@@ -520,7 +532,6 @@ exports.changePassword = async (req, res, next) => {
       });
     } catch (auditError) {
       console.error("⚠️ Erro ao criar log de auditoria:", auditError);
-      // Não falhar a operação se o log falhar
     }
 
     console.log("✅ Senha alterada com sucesso:", {
@@ -535,7 +546,7 @@ exports.changePassword = async (req, res, next) => {
       message:
         "Senha alterada com sucesso! Por segurança, faça login novamente.",
       timestamp: user.lastPasswordChange,
-      requiresLogin: true, // 🔧 Flag para frontend forçar re-login
+      requiresLogin: true,
     });
   } catch (error) {
     console.error("❌ Erro ao alterar senha:", error);
@@ -546,34 +557,324 @@ exports.changePassword = async (req, res, next) => {
   }
 };
 
-// --- Helpers ---
+// ========== RECUPERAÇÃO DE SENHA (SEM AUTENTICAÇÃO) ==========
 
-function cookieOptions(req) {
-  const secure = cookieSecure();
-  return {
-    httpOnly: true,
-    secure,
-    sameSite: "strict",
-    maxAge: msToMillis(process.env.REFRESH_TOKEN_EXPIRES_IN || "7d"),
-  };
-}
-
-function cookieSecure() {
-  return (
-    process.env.COOKIE_SECURE === "true" ||
-    process.env.NODE_ENV === "production"
-  );
-}
-
-function msToMillis(str) {
-  try {
-    const num = parseInt(str.slice(0, -1), 10);
-    const unit = str.slice(-1);
-    if (unit === "d") return num * 24 * 60 * 60 * 1000;
-    if (unit === "h") return num * 60 * 60 * 1000;
-    if (unit === "m") return num * 60 * 1000;
-    return parseInt(str, 10);
-  } catch (e) {
-    return 7 * 24 * 60 * 60 * 1000;
+exports.requestPasswordReset = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      errors: errors.array(),
+    });
   }
-}
+
+  const { email } = req.body;
+
+  try {
+    const user = await User.findOne({ email: email.toLowerCase() });
+
+    if (!user) {
+      return res.json({
+        success: true,
+        message: "Se o email existir, um código foi enviado",
+      });
+    }
+
+    if (user.status !== "active" || !user.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Conta inativa ou suspensa",
+      });
+    }
+
+    const verificationCode = generateVerificationCode();
+
+    const hashedCode = crypto
+      .createHash("sha256")
+      .update(verificationCode)
+      .digest("hex");
+
+    user.resetPasswordToken = hashedCode;
+    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000;
+    await user.save();
+
+    const mailOptions = {
+      from: `"Altrum Coins" <${process.env.EMAIL_USER}>`,
+      to: user.email,
+      subject: "Código de Recuperação de Senha - Altrum",
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                     color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+            .code-box { background: white; padding: 20px; text-align: center; 
+                       border: 2px dashed #667eea; border-radius: 8px; margin: 20px 0; }
+            .code { font-size: 32px; font-weight: bold; color: #667eea; 
+                   letter-spacing: 8px; font-family: monospace; }
+            .warning { background: #fff3cd; border-left: 4px solid #ffc107; 
+                      padding: 12px; margin: 20px 0; border-radius: 4px; }
+            .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>🔐 Recuperação de Senha</h1>
+            </div>
+            <div class="content">
+              <p>Olá, <strong>${user.name}</strong>!</p>
+              <p>Recebemos uma solicitação para redefinir a senha da sua conta.</p>
+              
+              <div class="code-box">
+                <p style="margin: 0 0 10px 0; color: #666;">Seu código de verificação é:</p>
+                <div class="code">${verificationCode}</div>
+              </div>
+
+              <div class="warning">
+                <strong>⏱️ Este código expira em 15 minutos</strong>
+              </div>
+
+              <p><strong>Instruções:</strong></p>
+              <ol>
+                <li>Acesse a página de recuperação de senha</li>
+                <li>Insira o código acima</li>
+                <li>Crie sua nova senha</li>
+              </ol>
+
+              <div class="warning">
+                <strong>⚠️ Não solicitou esta alteração?</strong><br>
+                Ignore este email. Sua senha permanecerá inalterada.
+              </div>
+
+              <p>Se tiver problemas, entre em contato com nosso suporte.</p>
+            </div>
+            <div class="footer">
+              <p>© ${new Date().getFullYear()} Altrum Coins - Sistema de Doações</p>
+              <p>Este é um email automático, não responda.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    console.log("✅ Código de recuperação enviado:", {
+      email: user.email,
+      userId: user._id,
+      expiresAt: new Date(user.resetPasswordExpires),
+    });
+
+    res.json({
+      success: true,
+      message: "Código enviado para o email cadastrado",
+      expiresIn: 900,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao solicitar recuperação:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro ao processar solicitação",
+    });
+  }
+};
+
+exports.verifyResetCode = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      errors: errors.array(),
+    });
+  }
+
+  const { email, code } = req.body;
+
+  try {
+    const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
+
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      resetPasswordToken: hashedCode,
+      resetPasswordExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Código inválido ou expirado",
+      });
+    }
+
+    const resetToken = jwt.sign(
+      { id: user._id, purpose: "password-reset" },
+      process.env.JWT_SECRET,
+      { expiresIn: "10m" }
+    );
+
+    console.log("✅ Código verificado com sucesso:", {
+      email: user.email,
+      userId: user._id,
+    });
+
+    res.json({
+      success: true,
+      message: "Código verificado com sucesso",
+      resetToken,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao verificar código:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro ao verificar código",
+    });
+  }
+};
+
+exports.resetPassword = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      errors: errors.array(),
+    });
+  }
+
+  const { resetToken, newPassword } = req.body;
+
+  try {
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
+
+      if (decoded.purpose !== "password-reset") {
+        throw new Error("Token inválido");
+      }
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        message: "Token de reset inválido ou expirado",
+      });
+    }
+
+    const user = await User.findById(decoded.id).select("+password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Usuário não encontrado",
+      });
+    }
+
+    const samePassword = await user.comparePassword(newPassword);
+    if (samePassword) {
+      return res.status(400).json({
+        success: false,
+        message: "A nova senha deve ser diferente da anterior",
+      });
+    }
+
+    user.password = newPassword;
+    user.lastPasswordChange = new Date();
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+
+    await user.save();
+
+    await Token.deleteMany({ user: user._id });
+
+    try {
+      await AuditLog.create({
+        userId: user._id,
+        action: "PASSWORD_RESET",
+        ip: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers["user-agent"],
+        metadata: {
+          email: user.email,
+          method: "email-verification",
+          timestamp: new Date(),
+        },
+      });
+    } catch (auditError) {
+      console.error("⚠️ Erro ao criar log de auditoria:", auditError);
+    }
+
+    try {
+      await transporter.sendMail({
+        from: `"Altrum Coins" <${process.env.EMAIL_USER}>`,
+        to: user.email,
+        subject: "Senha Alterada com Sucesso - Altrum",
+        html: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: linear-gradient(135deg, #00ff88 0%, #00cc66 100%); 
+                       color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+              .success { background: #d4edda; border-left: 4px solid #28a745; 
+                        padding: 12px; margin: 20px 0; border-radius: 4px; }
+              .warning { background: #fff3cd; border-left: 4px solid #ffc107; 
+                        padding: 12px; margin: 20px 0; border-radius: 4px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>✅ Senha Alterada</h1>
+              </div>
+              <div class="content">
+                <p>Olá, <strong>${user.name}</strong>!</p>
+                
+                <div class="success">
+                  <strong>✓ Sua senha foi alterada com sucesso!</strong>
+                </div>
+
+                <p><strong>Detalhes da alteração:</strong></p>
+                <ul>
+                  <li>Data: ${new Date().toLocaleString("pt-BR")}</li>
+                  <li>Método: Recuperação por email</li>
+                </ul>
+
+                <div class="warning">
+                  <strong>⚠️ Não foi você?</strong><br>
+                  Se você não realizou esta alteração, entre em contato imediatamente com nosso suporte.
+                </div>
+
+                <p>Por segurança, você precisará fazer login novamente em todos os dispositivos.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `,
+      });
+    } catch (emailError) {
+      console.error("⚠️ Erro ao enviar email de confirmação:", emailError);
+    }
+
+    console.log("✅ Senha resetada com sucesso:", {
+      userId: user._id,
+      email: user.email,
+      timestamp: user.lastPasswordChange,
+    });
+
+    res.json({
+      success: true,
+      message: "Senha alterada com sucesso! Faça login com sua nova senha.",
+    });
+  } catch (error) {
+    console.error("❌ Erro ao resetar senha:", error);
+    res.status(500).json({
+      success: false,
+      message: "Erro ao resetar senha",
+    });
+  }
+};

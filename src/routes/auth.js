@@ -10,6 +10,7 @@ const {
   changePasswordRateLimit,
 } = require("../middleware/rateLimiting");
 
+// ========== ROTAS DE REGISTRO E LOGIN ==========
 router.post(
   "/register",
   upload.none(),
@@ -20,7 +21,7 @@ router.post(
     check("cpf", "CPF inválido ou não fornecido")
       .trim()
       .notEmpty()
-      .isLength({ min: 11, max: 14 }) // Ajuste min/max conforme sua regra de negócio (com ou sem máscara)
+      .isLength({ min: 11, max: 14 })
       .withMessage("CPF deve ter entre 11 e 14 caracteres"),
     check("phone")
       .optional({ checkFalsy: true })
@@ -47,18 +48,21 @@ router.post(
   authController.login
 );
 
-// Adicionado: Rota para verificar o status de autenticação
+// ========== ROTAS DE AUTENTICAÇÃO ==========
 router.get("/check", protect, (req, res) => {
-  // Se o middleware `protect` passar, o token é válido
   res.status(200).json({ success: true, message: "Usuário autenticado" });
 });
 
+router.post("/refresh", authController.refreshToken);
+router.post("/logout", authController.logout);
+router.get("/me", protect, authController.me);
+
+// ========== ROTAS DE ALTERAÇÃO DE SENHA (AUTENTICADO) ==========
 router.post(
   "/change-password",
   protect,
-  changePasswordRateLimit, //
+  changePasswordRateLimit,
   [
-    // 🔧 ADICIONAR VALIDAÇÕES
     check("currentPassword", "Senha atual é obrigatória").notEmpty(),
     check("newPassword", "Nova senha deve ter no mínimo 8 caracteres")
       .isLength({ min: 8 })
@@ -70,9 +74,42 @@ router.post(
   authController.changePassword
 );
 
-router.post("/refresh", authController.refreshToken);
-router.post("/logout", authController.logout);
-router.get("/me", protect, authController.me);
-router.post("/change-password", protect, authController.changePassword);
+// ========== ROTAS DE RECUPERAÇÃO DE SENHA ==========
+// Solicitar código de recuperação
+router.post(
+  "/request-password-reset",
+  authRateLimit,
+  [check("email", "Email inválido").isEmail().normalizeEmail()],
+  authController.requestPasswordReset
+);
+
+// Verificar código de recuperação
+router.post(
+  "/verify-reset-code",
+  authRateLimit,
+  [
+    check("email", "Email inválido").isEmail().normalizeEmail(),
+    check("code", "Código deve ter 6 dígitos")
+      .isLength({ min: 6, max: 6 })
+      .isNumeric(),
+  ],
+  authController.verifyResetCode
+);
+
+// Resetar senha com token temporário
+router.post(
+  "/reset-password",
+  authRateLimit,
+  [
+    check("resetToken", "Token de reset é obrigatório").notEmpty(),
+    check("newPassword", "Nova senha deve ter no mínimo 8 caracteres")
+      .isLength({ min: 8 })
+      .withMessage("Senha deve ter pelo menos 8 caracteres"),
+    check("newPassword")
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+      .withMessage("Senha deve conter letras maiúsculas, minúsculas e números"),
+  ],
+  authController.resetPassword
+);
 
 module.exports = router;
