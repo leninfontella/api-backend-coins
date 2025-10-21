@@ -16,9 +16,9 @@ const createTransporter = () => {
       rejectUnauthorized: false, // Aceitar certificados auto-assinados
       ciphers: "SSLv3",
     },
-    connectionTimeout: 10000, // 10 segundos
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+    connectionTimeout: 30000, // 10 segundos
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
     debug: process.env.NODE_ENV === "development", // Logs detalhados
     logger: process.env.NODE_ENV === "development", // Logger ativo
   });
@@ -38,9 +38,9 @@ const createSecureTransporter = () => {
     tls: {
       rejectUnauthorized: false,
     },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   });
 };
 
