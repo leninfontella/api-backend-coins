@@ -1,36 +1,22 @@
 // src/services/emailService.js
+const sgMail = require("@sendgrid/mail");
 const nodemailer = require("nodemailer");
 
-// Configurar transportador com timeout e configurações otimizadas
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    service: "gmail",
-    host: "smtp.gmail.com",
-    port: 587, // Porta TLS (melhor compatibilidade)
-    secure: false, // true para 465, false para outras portas
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    tls: {
-      rejectUnauthorized: false, // Aceitar certificados auto-assinados
-      ciphers: "SSLv3",
-    },
-    connectionTimeout: 30000, // 10 segundos
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
-    debug: process.env.NODE_ENV === "development", // Logs detalhados
-    logger: process.env.NODE_ENV === "development", // Logger ativo
-  });
-};
+// ========== CONFIGURAÇÃO ==========
 
-// Fallback: usar porta 465 (SSL)
-const createSecureTransporter = () => {
+// Configurar SendGrid se disponível
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  console.log("✅ SendGrid configurado");
+}
+
+// Fallback: Gmail (para desenvolvimento local)
+const createGmailTransporter = () => {
   return nodemailer.createTransport({
     service: "gmail",
     host: "smtp.gmail.com",
-    port: 465,
-    secure: true, // SSL
+    port: 587,
+    secure: false,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
@@ -38,71 +24,115 @@ const createSecureTransporter = () => {
     tls: {
       rejectUnauthorized: false,
     },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 };
 
-// Verificar se email está configurado
+// ========== VERIFICAÇÃO ==========
+
 const isEmailConfigured = () => {
-  return !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
+  const hasSendGrid = !!process.env.SENDGRID_API_KEY;
+  const hasGmail = !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
+
+  return hasSendGrid || hasGmail;
 };
 
-// Enviar email com retry automático
-const sendEmail = async (mailOptions, retries = 2) => {
+const getEmailProvider = () => {
+  if (process.env.SENDGRID_API_KEY) {
+    return "sendgrid";
+  }
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    return "gmail";
+  }
+  return null;
+};
+
+// ========== ENVIO DE EMAIL ==========
+
+const sendEmailViaSendGrid = async (mailOptions) => {
+  const msg = {
+    to: mailOptions.to,
+    from: process.env.EMAIL_FROM || "noreply@altrum.com", // Email verificado no SendGrid
+    subject: mailOptions.subject,
+    html: mailOptions.html,
+    text: mailOptions.text,
+  };
+
+  console.log("📧 Enviando via SendGrid para:", mailOptions.to);
+
+  const result = await sgMail.send(msg);
+
+  console.log("✅ Email enviado via SendGrid:", {
+    statusCode: result[0].statusCode,
+    to: mailOptions.to,
+  });
+
+  return {
+    success: true,
+    messageId: result[0].headers["x-message-id"],
+    provider: "sendgrid",
+  };
+};
+
+const sendEmailViaGmail = async (mailOptions) => {
+  console.log("📧 Enviando via Gmail para:", mailOptions.to);
+
+  const transporter = createGmailTransporter();
+  const info = await transporter.sendMail(mailOptions);
+
+  console.log("✅ Email enviado via Gmail:", {
+    messageId: info.messageId,
+    accepted: info.accepted,
+  });
+
+  return {
+    success: true,
+    messageId: info.messageId,
+    provider: "gmail",
+  };
+};
+
+const sendEmail = async (mailOptions, retries = 1) => {
   if (!isEmailConfigured()) {
-    console.error("❌ Credenciais de email não configuradas no .env");
+    console.error("❌ Nenhum provedor de email configurado");
     throw new Error("Email não configurado no servidor");
   }
 
+  const provider = getEmailProvider();
+  console.log(`📬 Provedor de email: ${provider}`);
+
   let lastError;
-  const transporters = [createTransporter(), createSecureTransporter()];
 
-  // Tentar com cada transportador
-  for (const transporter of transporters) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        console.log(
-          `📧 Tentativa ${attempt}/${retries} - Porta: ${transporter.options.port}`
-        );
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      if (provider === "sendgrid") {
+        return await sendEmailViaSendGrid(mailOptions);
+      } else if (provider === "gmail") {
+        return await sendEmailViaGmail(mailOptions);
+      }
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `❌ Tentativa ${attempt}/${retries} falhou:`,
+        error.message
+      );
 
-        const info = await transporter.sendMail(mailOptions);
-
-        console.log("✅ Email enviado com sucesso:", {
-          messageId: info.messageId,
-          accepted: info.accepted,
-          response: info.response,
-        });
-
-        return {
-          success: true,
-          messageId: info.messageId,
-        };
-      } catch (error) {
-        lastError = error;
-        console.error(
-          `❌ Tentativa ${attempt} falhou (porta ${transporter.options.port}):`,
-          error.message
-        );
-
-        // Aguardar antes de tentar novamente
-        if (attempt < retries) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
   }
 
-  // Se todas as tentativas falharem
   console.error("❌ Todas as tentativas de envio falharam:", lastError);
   throw lastError;
 };
 
-// Template: Código de Recuperação
+// ========== TEMPLATES ==========
+
 const sendPasswordResetCode = async (user, code) => {
   const mailOptions = {
-    from: `"Altrum Coins" <${process.env.EMAIL_USER}>`,
     to: user.email,
     subject: "Código de Recuperação de Senha - Altrum",
     html: `
@@ -255,10 +285,8 @@ Não solicitou esta alteração? Ignore este email.
   return await sendEmail(mailOptions);
 };
 
-// Template: Confirmação de Senha Alterada
 const sendPasswordChangedConfirmation = async (user) => {
   const mailOptions = {
-    from: `"Altrum Coins" <${process.env.EMAIL_USER}>`,
     to: user.email,
     subject: "Senha Alterada com Sucesso - Altrum",
     html: `
@@ -350,6 +378,20 @@ const sendPasswordChangedConfirmation = async (user) => {
       </body>
       </html>
     `,
+    text: `
+Olá, ${user.name}!
+
+Sua senha foi alterada com sucesso!
+
+Data: ${new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+Método: Recuperação por email
+
+Não foi você? Entre em contato imediatamente com nosso suporte.
+
+Por segurança, você precisará fazer login novamente em todos os dispositivos.
+
+© ${new Date().getFullYear()} Altrum Coins
+    `.trim(),
   };
 
   return await sendEmail(mailOptions);
@@ -359,4 +401,5 @@ module.exports = {
   sendPasswordResetCode,
   sendPasswordChangedConfirmation,
   isEmailConfigured,
+  getEmailProvider,
 };
