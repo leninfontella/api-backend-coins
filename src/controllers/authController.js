@@ -564,21 +564,31 @@ exports.requestPasswordReset = async (req, res, next) => {
   try {
     const user = await User.findOne({ email: email.toLowerCase() });
 
+    // ✅ CORREÇÃO: Verificar se usuário existe ANTES de enviar código
     if (!user) {
-      // Por segurança, não revelar se o email existe
-      return res.json({
-        success: true,
-        message: "Se o email existir, um código foi enviado",
+      console.log(
+        "⚠️ Tentativa de recuperação com email não cadastrado:",
+        email
+      );
+
+      // Aguardar um pouco para evitar timing attack
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      return res.status(404).json({
+        success: false,
+        message: "Email não cadastrado no sistema",
       });
     }
 
+    // Verificar se a conta está ativa
     if (user.status !== "active" || !user.isActive) {
       return res.status(403).json({
         success: false,
-        message: "Conta inativa ou suspensa",
+        message: "Conta inativa ou suspensa. Entre em contato com o suporte.",
       });
     }
 
+    // Gerar código de verificação
     const verificationCode = generateVerificationCode();
 
     const hashedCode = crypto
