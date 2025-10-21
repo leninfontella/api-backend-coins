@@ -6,16 +6,7 @@ const jwt = require("jsonwebtoken");
 const { validationResult } = require("express-validator");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
-
-// ========== CONFIGURAÇÃO DE EMAIL ==========
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const emailService = require("../services/emailService");
 
 // ========== HELPERS ==========
 
@@ -574,6 +565,7 @@ exports.requestPasswordReset = async (req, res, next) => {
     const user = await User.findOne({ email: email.toLowerCase() });
 
     if (!user) {
+      // Por segurança, não revelar se o email existe
       return res.json({
         success: true,
         message: "Se o email existir, um código foi enviado",
@@ -595,87 +587,41 @@ exports.requestPasswordReset = async (req, res, next) => {
       .digest("hex");
 
     user.resetPasswordToken = hashedCode;
-    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000;
+    user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // 15 minutos
     await user.save();
 
-    const mailOptions = {
-      from: `"Altrum Coins" <${process.env.EMAIL_USER}>`,
-      to: user.email,
-      subject: "Código de Recuperação de Senha - Altrum",
-      html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                     color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-            .code-box { background: white; padding: 20px; text-align: center; 
-                       border: 2px dashed #667eea; border-radius: 8px; margin: 20px 0; }
-            .code { font-size: 32px; font-weight: bold; color: #667eea; 
-                   letter-spacing: 8px; font-family: monospace; }
-            .warning { background: #fff3cd; border-left: 4px solid #ffc107; 
-                      padding: 12px; margin: 20px 0; border-radius: 4px; }
-            .footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🔐 Recuperação de Senha</h1>
-            </div>
-            <div class="content">
-              <p>Olá, <strong>${user.name}</strong>!</p>
-              <p>Recebemos uma solicitação para redefinir a senha da sua conta.</p>
-              
-              <div class="code-box">
-                <p style="margin: 0 0 10px 0; color: #666;">Seu código de verificação é:</p>
-                <div class="code">${verificationCode}</div>
-              </div>
+    // Enviar email usando o serviço
+    try {
+      await emailService.sendPasswordResetCode(user, verificationCode);
 
-              <div class="warning">
-                <strong>⏱️ Este código expira em 15 minutos</strong>
-              </div>
+      console.log("✅ Código de recuperação enviado:", {
+        email: user.email,
+        userId: user._id,
+        expiresAt: new Date(user.resetPasswordExpires),
+      });
 
-              <p><strong>Instruções:</strong></p>
-              <ol>
-                <li>Acesse a página de recuperação de senha</li>
-                <li>Insira o código acima</li>
-                <li>Crie sua nova senha</li>
-              </ol>
+      res.json({
+        success: true,
+        message: "Código enviado para o email cadastrado",
+        expiresIn: 900, // 15 minutos em segundos
+      });
+    } catch (emailError) {
+      console.error("❌ Erro ao enviar email:", emailError);
 
-              <div class="warning">
-                <strong>⚠️ Não solicitou esta alteração?</strong><br>
-                Ignore este email. Sua senha permanecerá inalterada.
-              </div>
+      // Limpar campos de reset se o email falhar
+      user.resetPasswordToken = undefined;
+      user.resetPasswordExpires = undefined;
+      await user.save();
 
-              <p>Se tiver problemas, entre em contato com nosso suporte.</p>
-            </div>
-            <div class="footer">
-              <p>© ${new Date().getFullYear()} Altrum Coins - Sistema de Doações</p>
-              <p>Este é um email automático, não responda.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
-    };
-
-    await transporter.sendMail(mailOptions);
-
-    console.log("✅ Código de recuperação enviado:", {
-      email: user.email,
-      userId: user._id,
-      expiresAt: new Date(user.resetPasswordExpires),
-    });
-
-    res.json({
-      success: true,
-      message: "Código enviado para o email cadastrado",
-      expiresIn: 900,
-    });
+      return res.status(500).json({
+        success: false,
+        message: "Erro ao enviar email. Tente novamente mais tarde.",
+        error:
+          process.env.NODE_ENV === "development"
+            ? emailError.message
+            : undefined,
+      });
+    }
   } catch (error) {
     console.error("❌ Erro ao solicitar recuperação:", error);
     res.status(500).json({
@@ -712,6 +658,7 @@ exports.verifyResetCode = async (req, res, next) => {
       });
     }
 
+    // Gerar token temporário válido por 10 minutos
     const resetToken = jwt.sign(
       { id: user._id, purpose: "password-reset" },
       process.env.JWT_SECRET,
@@ -726,7 +673,7 @@ exports.verifyResetCode = async (req, res, next) => {
     res.json({
       success: true,
       message: "Código verificado com sucesso",
-      resetToken,
+      resetToken, // Frontend usa este token para resetar senha
     });
   } catch (error) {
     console.error("❌ Erro ao verificar código:", error);
@@ -749,6 +696,7 @@ exports.resetPassword = async (req, res, next) => {
   const { resetToken, newPassword } = req.body;
 
   try {
+    // Verificar token temporário
     let decoded;
     try {
       decoded = jwt.verify(resetToken, process.env.JWT_SECRET);
@@ -772,6 +720,7 @@ exports.resetPassword = async (req, res, next) => {
       });
     }
 
+    // Verificar se não está reutilizando senha antiga
     const samePassword = await user.comparePassword(newPassword);
     if (samePassword) {
       return res.status(400).json({
@@ -780,6 +729,7 @@ exports.resetPassword = async (req, res, next) => {
       });
     }
 
+    // Atualizar senha
     user.password = newPassword;
     user.lastPasswordChange = new Date();
     user.resetPasswordToken = undefined;
@@ -787,8 +737,10 @@ exports.resetPassword = async (req, res, next) => {
 
     await user.save();
 
+    // Invalidar todos os refresh tokens
     await Token.deleteMany({ user: user._id });
 
+    // Log de auditoria
     try {
       await AuditLog.create({
         userId: user._id,
@@ -805,59 +757,12 @@ exports.resetPassword = async (req, res, next) => {
       console.error("⚠️ Erro ao criar log de auditoria:", auditError);
     }
 
+    // Enviar email de confirmação
     try {
-      await transporter.sendMail({
-        from: `"Altrum Coins" <${process.env.EMAIL_USER}>`,
-        to: user.email,
-        subject: "Senha Alterada com Sucesso - Altrum",
-        html: `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background: linear-gradient(135deg, #00ff88 0%, #00cc66 100%); 
-                       color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-              .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-              .success { background: #d4edda; border-left: 4px solid #28a745; 
-                        padding: 12px; margin: 20px 0; border-radius: 4px; }
-              .warning { background: #fff3cd; border-left: 4px solid #ffc107; 
-                        padding: 12px; margin: 20px 0; border-radius: 4px; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>✅ Senha Alterada</h1>
-              </div>
-              <div class="content">
-                <p>Olá, <strong>${user.name}</strong>!</p>
-                
-                <div class="success">
-                  <strong>✓ Sua senha foi alterada com sucesso!</strong>
-                </div>
-
-                <p><strong>Detalhes da alteração:</strong></p>
-                <ul>
-                  <li>Data: ${new Date().toLocaleString("pt-BR")}</li>
-                  <li>Método: Recuperação por email</li>
-                </ul>
-
-                <div class="warning">
-                  <strong>⚠️ Não foi você?</strong><br>
-                  Se você não realizou esta alteração, entre em contato imediatamente com nosso suporte.
-                </div>
-
-                <p>Por segurança, você precisará fazer login novamente em todos os dispositivos.</p>
-              </div>
-            </div>
-          </body>
-          </html>
-        `,
-      });
+      await emailService.sendPasswordChangedConfirmation(user);
     } catch (emailError) {
       console.error("⚠️ Erro ao enviar email de confirmação:", emailError);
+      // Não falhar a operação se o email de confirmação falhar
     }
 
     console.log("✅ Senha resetada com sucesso:", {
