@@ -101,7 +101,7 @@ const userSchema = new mongoose.Schema(
     // ========== SISTEMA DE MOEDAS E GAMIFICAÇÃO ==========
     coins: {
       type: Number,
-      default: 100,
+      default: 50000,
       min: [0, "Saldo não pode ser negativo"],
       max: [10000000, "Saldo máximo excedido"],
       validate: {
