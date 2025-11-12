@@ -73,9 +73,8 @@ exports.getBalance = async (req, res, next) => {
 // Atualizar saldo do usuário
 exports.updateBalance = async (req, res, next) => {
   try {
-    const { amount, operation, type, description } = req.body;
+    const { amount, operation, type, description, metadata } = req.body;
 
-    // CORREÇÃO: Aceitar tanto 'operation' quanto 'type' para compatibilidade
     const operationType = operation || type;
 
     // Validações
@@ -101,29 +100,34 @@ exports.updateBalance = async (req, res, next) => {
       });
     }
 
-    // CORREÇÃO: Tratar valores negativos corretamente
     let finalAmount = amount;
 
-    // Se o tipo é 'subtract' ou amount é negativo, garantir que seja negativo
     if (operationType === "subtract" || amount < 0) {
       finalAmount = -Math.abs(amount);
     } else if (operationType === "add") {
       finalAmount = Math.abs(amount);
     }
 
-    // Verificar se o saldo não ficará negativo para operações de subtração
+    // Verificar saldo insuficiente
     if (finalAmount < 0 && user.coins < Math.abs(finalAmount)) {
       return res.status(400).json({
         success: false,
         message: "Saldo insuficiente",
+        data: {
+          required: Math.abs(finalAmount),
+          available: user.coins,
+        },
       });
     }
 
     // Atualizar saldo
     user.coins += finalAmount;
 
-    // Atualizar estatísticas baseadas no tipo de operação
-    if (finalAmount < 0) {
+    // Atualizar estatísticas (exceto para compras)
+    if (metadata && metadata.type === "purchase") {
+      // Para compras, não contar como doação
+      console.log(`🛒 Compra registrada: ${metadata.productName}`);
+    } else if (finalAmount < 0) {
       user.totalDonated = (user.totalDonated || 0) + Math.abs(finalAmount);
     } else {
       user.totalReceived = (user.totalReceived || 0) + finalAmount;
@@ -131,24 +135,31 @@ exports.updateBalance = async (req, res, next) => {
 
     await user.save();
 
-    // Log da transação para auditoria
-    console.log(
-      `💰 Saldo atualizado - Usuário: ${
-        user.fullName || user.name
-      }, Valor: ${finalAmount}, Novo saldo: ${user.coins}`
-    );
+    // Log detalhado
+    const logParts = [
+      `💰 Saldo atualizado`,
+      `Usuário: ${user.fullName || user.name}`,
+      `Valor: ${finalAmount}`,
+      `Novo saldo: ${user.coins}`,
+    ];
 
-    // CORREÇÃO: Retornar estrutura compatível
+    if (description) logParts.push(`Descrição: ${description}`);
+    if (metadata?.productName)
+      logParts.push(`Produto: ${metadata.productName}`);
+
+    console.log(logParts.join(" | "));
+
     res.json({
       success: true,
-      message: "Saldo atualizado com sucesso",
+      message: description || "Saldo atualizado com sucesso",
       data: {
         coins: user.coins,
-        balance: user.coins, // Compatibilidade
+        balance: user.coins,
         level: user.level,
         totalDonated: user.totalDonated || 0,
         totalReceived: user.totalReceived || 0,
       },
+      ...(metadata && { metadata }),
     });
   } catch (error) {
     console.error("Erro ao atualizar saldo:", error);
