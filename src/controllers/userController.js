@@ -869,6 +869,312 @@ exports.getStats = async (req, res, next) => {
 };
 
 /**
+ * Registrar compra na loja
+ * POST /api/users/purchase
+ */
+exports.createPurchase = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { productId, productName, price, metadata } = req.body;
+    const userId = req.user.id;
+
+    // Validações
+    if (!productId || !productName || !price) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Dados do produto incompletos",
+      });
+    }
+
+    if (price <= 0) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Preço inválido",
+      });
+    }
+
+    // Buscar usuário
+    const user = await User.findById(userId).session(session);
+    if (!user) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Usuário não encontrado",
+      });
+    }
+
+    // Verificar saldo
+    if (user.coins < price) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Saldo insuficiente",
+        data: {
+          required: price,
+          available: user.coins,
+        },
+      });
+    }
+
+    // Atualizar saldo
+    user.coins -= price;
+    await user.save({ session });
+
+    // Criar registro de compra
+    const Purchase = require("../models/Purchase");
+    const purchase = new Purchase({
+      user: userId,
+      productId,
+      productName,
+      price,
+      status: "completed",
+      deliveryStatus: "pending",
+      balanceAfter: user.coins,
+      metadata: metadata || {},
+    });
+
+    await purchase.save({ session });
+
+    // Commit da transação
+    await session.commitTransaction();
+
+    console.log(
+      `🛒 Compra registrada: ${productName} - ${price} moedas - Usuário: ${
+        user.fullName || user.name
+      }`
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Compra realizada com sucesso",
+      data: {
+        purchase: {
+          id: purchase._id,
+          productId: purchase.productId,
+          productName: purchase.productName,
+          price: purchase.price,
+          status: purchase.status,
+          deliveryStatus: purchase.deliveryStatus,
+          createdAt: purchase.createdAt,
+        },
+        balance: user.coins,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("❌ Erro ao processar compra:", error);
+    next(error);
+  } finally {
+    session.endSession();
+  }
+};
+
+/**
+ * Obter histórico de compras do usuário
+ * GET /api/users/purchases
+ */
+exports.getUserPurchases = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const status = req.query.status; // Filtro opcional
+
+    const Purchase = require("../models/Purchase");
+
+    // Construir query
+    const query = { user: userId };
+    if (status) {
+      query.status = status;
+    }
+
+    // Buscar compras
+    const [purchases, total, stats] = await Promise.all([
+      Purchase.find(query)
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .skip(skip)
+        .lean(),
+      Purchase.countDocuments(query),
+      Purchase.getUserStats(userId),
+    ]);
+
+    // Formatar compras
+    const formattedPurchases = purchases.map((purchase) => ({
+      id: purchase._id,
+      productId: purchase.productId,
+      productName: purchase.productName,
+      price: purchase.price,
+      status: purchase.status,
+      deliveryStatus: purchase.deliveryStatus,
+      balanceAfter: purchase.balanceAfter,
+      metadata: purchase.metadata || {},
+      createdAt: purchase.createdAt,
+      formattedDate: new Date(purchase.createdAt).toLocaleDateString("pt-BR", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        purchases: formattedPurchases,
+        stats: {
+          totalPurchases: stats.totalPurchases,
+          totalSpent: stats.totalSpent,
+          avgPurchase: Math.round(stats.avgPurchase),
+        },
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit),
+          hasNext: skip + limit < total,
+          hasPrev: page > 1,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("❌ Erro ao buscar histórico de compras:", error);
+    next(error);
+  }
+};
+
+/**
+ * Obter detalhes de uma compra específica
+ * GET /api/users/purchases/:purchaseId
+ */
+exports.getPurchaseById = async (req, res, next) => {
+  try {
+    const { purchaseId } = req.params;
+    const userId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(purchaseId)) {
+      return res.status(400).json({
+        success: false,
+        message: "ID de compra inválido",
+      });
+    }
+
+    const Purchase = require("../models/Purchase");
+    const purchase = await Purchase.findOne({
+      _id: purchaseId,
+      user: userId,
+    }).lean();
+
+    if (!purchase) {
+      return res.status(404).json({
+        success: false,
+        message: "Compra não encontrada",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        purchase: {
+          id: purchase._id,
+          productId: purchase.productId,
+          productName: purchase.productName,
+          price: purchase.price,
+          status: purchase.status,
+          deliveryStatus: purchase.deliveryStatus,
+          balanceAfter: purchase.balanceAfter,
+          metadata: purchase.metadata || {},
+          deliveryInfo: purchase.deliveryInfo || {},
+          createdAt: purchase.createdAt,
+          updatedAt: purchase.updatedAt,
+          formattedDate: new Date(purchase.createdAt).toLocaleDateString(
+            "pt-BR",
+            {
+              day: "2-digit",
+              month: "long",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            }
+          ),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("❌ Erro ao buscar detalhes da compra:", error);
+    next(error);
+  }
+};
+
+/**
+ * Obter estatísticas de compras
+ * GET /api/users/purchases/stats
+ */
+exports.getPurchaseStats = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const Purchase = require("../models/Purchase");
+
+    const [stats, recentPurchases, monthlyStats] = await Promise.all([
+      Purchase.getUserStats(userId),
+      Purchase.find({ user: userId, status: "completed" })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("productName price createdAt")
+        .lean(),
+      Purchase.aggregate([
+        {
+          $match: {
+            user: mongoose.Types.ObjectId(userId),
+            status: "completed",
+            createdAt: {
+              $gte: new Date(new Date().setMonth(new Date().getMonth() - 6)),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            },
+            total: { $sum: "$price" },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": -1, "_id.month": -1 } },
+      ]),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        overview: stats,
+        recentPurchases: recentPurchases.map((p) => ({
+          productName: p.productName,
+          price: p.price,
+          date: p.createdAt,
+        })),
+        monthlySpending: monthlyStats.map((m) => ({
+          month: `${m._id.month}/${m._id.year}`,
+          total: m.total,
+          count: m.count,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("❌ Erro ao buscar estatísticas:", error);
+    next(error);
+  }
+};
+
+/**
  * Excluir conta do usuário permanentemente
  * Mantém integridade referencial das doações
  * DELETE /api/users/account
