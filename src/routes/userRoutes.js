@@ -388,26 +388,10 @@ router.delete(
 router.post(
   "/purchase",
   [
-    body("productId")
-      .notEmpty()
-      .withMessage("ID do produto é obrigatório")
-      .isString()
-      .withMessage("ID do produto deve ser uma string"),
-    body("productName")
-      .notEmpty()
-      .withMessage("Nome do produto é obrigatório")
-      .trim()
-      .isLength({ min: 2, max: 200 })
-      .withMessage("Nome do produto deve ter entre 2 e 200 caracteres"),
-    body("price")
-      .notEmpty()
-      .withMessage("Preço é obrigatório")
-      .isInt({ min: 1 })
-      .withMessage("Preço deve ser um número inteiro positivo"),
-    body("metadata")
-      .optional()
-      .isObject()
-      .withMessage("Metadata deve ser um objeto"),
+    body("productId").notEmpty().isString(),
+    body("productName").notEmpty().trim().isLength({ min: 2, max: 200 }),
+    body("price").notEmpty().isInt({ min: 1 }),
+    body("metadata").optional().isObject(),
   ],
   validateRequest,
   userController.createPurchase
@@ -417,18 +401,9 @@ router.post(
 router.get(
   "/purchases",
   [
-    query("page")
-      .optional()
-      .isInt({ min: 1 })
-      .withMessage("Página deve ser um número maior que 0"),
-    query("limit")
-      .optional()
-      .isInt({ min: 1, max: 100 })
-      .withMessage("Limite deve ser entre 1 e 100"),
-    query("status")
-      .optional()
-      .isIn(["completed", "pending", "cancelled", "processing"])
-      .withMessage("Status inválido"),
+    query("page").optional().isInt({ min: 1 }),
+    query("limit").optional().isInt({ min: 1, max: 100 }),
+    query("status").optional().isIn(["completed", "pending", "cancelled"]),
   ],
   validateRequest,
   userController.getUserPurchases
@@ -440,7 +415,7 @@ router.get("/purchases/stats", userController.getPurchaseStats);
 // GET /api/users/purchases/:purchaseId - Detalhes de uma compra
 router.get(
   "/purchases/:purchaseId",
-  [param("purchaseId").isMongoId().withMessage("ID de compra inválido")],
+  [param("purchaseId").isMongoId()],
   validateRequest,
   userController.getPurchaseById
 );
