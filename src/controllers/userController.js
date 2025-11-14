@@ -1166,7 +1166,10 @@ exports.getUserPurchases = async (req, res, next) => {
     // Calcular estatísticas
     const stats = await Purchase.aggregate([
       {
-        $match: { user: mongoose.Types.ObjectId(userId), status: "completed" },
+        $match: {
+          user: new mongoose.Types.ObjectId(userId),
+          status: "completed",
+        },
       },
       {
         $group: {
@@ -1281,7 +1284,10 @@ exports.getPurchaseStats = async (req, res, next) => {
 
     const stats = await Purchase.aggregate([
       {
-        $match: { user: mongoose.Types.ObjectId(userId), status: "completed" },
+        $match: {
+          user: new mongoose.Types.ObjectId(userId),
+          status: "completed",
+        },
       },
       {
         $group: {

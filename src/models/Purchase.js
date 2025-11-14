@@ -69,10 +69,14 @@ purchaseSchema.virtual("formattedDate").get(function () {
   });
 });
 
-// Método para obter estatísticas de um usuário
 purchaseSchema.statics.getUserStats = async function (userId) {
   const stats = await this.aggregate([
-    { $match: { user: mongoose.Types.ObjectId(userId), status: "completed" } },
+    {
+      $match: {
+        user: new mongoose.Types.ObjectId(userId), // ✅ ADICIONAR new
+        status: "completed",
+      },
+    },
     {
       $group: {
         _id: null,
